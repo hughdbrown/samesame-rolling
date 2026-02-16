@@ -1,28 +1,10 @@
 //! Tests for output formatting.
 
 use regex::Regex;
-use samesame::output::{format_json, format_text, RangeInfo};
+use samesame::grouping::group_duplicates;
+use samesame::output::{format_json, format_text};
 use samesame::types::{ComparisonResult, FileDescription, LineRange, Range};
 use std::path::PathBuf;
-
-#[test]
-fn test_range_info_conversion() {
-    let r = Range::new(0, 5);
-    let info: RangeInfo = (&r).into();
-
-    // Should be 1-based
-    assert_eq!(info.start, 1);
-    assert_eq!(info.end, 5);
-}
-
-#[test]
-fn test_range_info_conversion_nonzero_start() {
-    let r = Range::new(10, 20);
-    let info: RangeInfo = (&r).into();
-
-    assert_eq!(info.start, 11);
-    assert_eq!(info.end, 20);
-}
 
 fn make_test_files() -> (FileDescription, FileDescription) {
     let f1 = FileDescription {
@@ -53,32 +35,34 @@ fn make_test_files() -> (FileDescription, FileDescription) {
 #[test]
 fn test_format_text_no_duplicates() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Diff {
             r1: Range::new(0, 5),
             r2: Range::new(0, 5),
         }],
-    };
+    }];
 
-    let output = format_text(&[result], 5, false, 2, 1);
+    let groups = group_duplicates(&results, 5);
+    let output = format_text(&groups, &results, false, 2, 1);
     assert!(output.contains("No duplicate code found"));
 }
 
 #[test]
 fn test_format_text_with_duplicates() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
-    let output = format_text(&[result], 3, false, 2, 1);
+    let groups = group_duplicates(&results, 3);
+    let output = format_text(&groups, &results, false, 2, 1);
     assert!(output.contains("Duplicate Code Found"));
     assert!(output.contains("file1.rs"));
     assert!(output.contains("file2.rs"));
@@ -89,16 +73,17 @@ fn test_format_text_with_duplicates() {
 #[test]
 fn test_format_text_verbose() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
-    let output = format_text(&[result], 3, true, 2, 1);
+    let groups = group_duplicates(&results, 3);
+    let output = format_text(&groups, &results, true, 2, 1);
     assert!(output.contains("fn main()"));
     assert!(output.contains("println!"));
 }
@@ -106,69 +91,74 @@ fn test_format_text_verbose() {
 #[test]
 fn test_format_text_below_threshold() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
     // Threshold is 5, but match is only 3 lines
-    let output = format_text(&[result], 5, false, 2, 1);
+    let groups = group_duplicates(&results, 5);
+    let output = format_text(&groups, &results, false, 2, 1);
     assert!(output.contains("No duplicate code found"));
 }
 
 #[test]
 fn test_format_json_no_duplicates() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Diff {
             r1: Range::new(0, 5),
             r2: Range::new(0, 5),
         }],
-    };
+    }];
 
-    let output = format_json(&[result], 5, false, 2, 1);
-    assert!(output.contains("\"duplicates_found\": 0"));
+    let groups = group_duplicates(&results, 5);
+    let output = format_json(&groups, &results, false, 2, 1);
+    assert!(output.contains("\"duplicate_groups\": 0"));
     assert!(output.contains("\"duplicates\": []"));
 }
 
 #[test]
 fn test_format_json_with_duplicates() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
-    let output = format_json(&[result], 3, false, 2, 1);
-    assert!(output.contains("\"duplicates_found\": 1"));
-    assert!(output.contains("\"file1\": \"src/file1.rs\""));
-    assert!(output.contains("\"file2\": \"src/file2.rs\""));
+    let groups = group_duplicates(&results, 3);
+    let output = format_json(&groups, &results, false, 2, 1);
+    assert!(output.contains("\"duplicate_groups\": 1"));
     assert!(output.contains("\"lines\": 3"));
+    // Grouped format uses locations array
+    assert!(output.contains("\"file\": \"src/file1.rs\""));
+    assert!(output.contains("\"file\": \"src/file2.rs\""));
 }
 
 #[test]
 fn test_format_json_verbose_includes_content() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
-    let output = format_json(&[result], 3, true, 2, 1);
+    let groups = group_duplicates(&results, 3);
+    let output = format_json(&groups, &results, true, 2, 1);
     assert!(output.contains("\"content\":"));
     assert!(output.contains("fn main()"));
 }
@@ -176,45 +166,50 @@ fn test_format_json_verbose_includes_content() {
 #[test]
 fn test_format_json_not_verbose_no_content() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
-    let output = format_json(&[result], 3, false, 2, 1);
-    // content field should be skipped when None
+    let groups = group_duplicates(&results, 3);
+    let output = format_json(&groups, &results, false, 2, 1);
     assert!(!output.contains("\"content\":"));
 }
 
 #[test]
 fn test_format_json_structure() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![LineRange::Same {
             r1: Range::new(0, 3),
             r2: Range::new(0, 3),
         }],
-    };
+    }];
 
-    let output = format_json(&[result], 3, false, 2, 1);
+    let groups = group_duplicates(&results, 3);
+    let output = format_json(&groups, &results, false, 2, 1);
 
-    // Parse as JSON to verify structure
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
     assert!(parsed["version"].is_string());
     assert!(parsed["summary"]["files_analyzed"].is_number());
     assert!(parsed["summary"]["pairs_compared"].is_number());
+    assert!(parsed["summary"]["duplicate_groups"].is_number());
     assert!(parsed["duplicates"].is_array());
+    // Each duplicate should have locations array
+    let first = &parsed["duplicates"][0];
+    assert!(first["locations"].is_array());
+    assert!(first["lines"].is_number());
 }
 
 #[test]
-fn test_format_text_multiple_results() {
+fn test_format_text_multiple_results_grouped() {
     let f1 = FileDescription {
         filename: PathBuf::from("a.rs"),
         hashes: vec![1, 2, 3],
@@ -231,34 +226,39 @@ fn test_format_text_multiple_results() {
         lines: vec!["a".into(), "b".into(), "c".into()],
     };
 
-    let result1 = ComparisonResult {
-        f1: &f1,
-        f2: &f2,
-        runs: vec![LineRange::Same {
-            r1: Range::new(0, 3),
-            r2: Range::new(0, 3),
-        }],
-    };
-    let result2 = ComparisonResult {
-        f1: &f1,
-        f2: &f3,
-        runs: vec![LineRange::Same {
-            r1: Range::new(0, 3),
-            r2: Range::new(0, 3),
-        }],
-    };
+    let results = vec![
+        ComparisonResult {
+            f1: &f1,
+            f2: &f2,
+            runs: vec![LineRange::Same {
+                r1: Range::new(0, 3),
+                r2: Range::new(0, 3),
+            }],
+        },
+        ComparisonResult {
+            f1: &f1,
+            f2: &f3,
+            runs: vec![LineRange::Same {
+                r1: Range::new(0, 3),
+                r2: Range::new(0, 3),
+            }],
+        },
+    ];
 
-    let output = format_text(&[result1, result2], 3, false, 3, 3);
+    let groups = group_duplicates(&results, 3);
+    let output = format_text(&groups, &results, false, 3, 3);
     assert!(output.contains("a.rs"));
     assert!(output.contains("b.rs"));
     assert!(output.contains("c.rs"));
-    assert!(output.contains("2 duplicate regions"));
+    // Should be 1 group (not 2 pairwise results), with 3 files
+    assert!(output.contains("1 duplicate groups"));
+    assert!(output.contains("3 lines duplicated across 3 files"));
 }
 
 #[test]
 fn test_format_json_multiple_matches_same_pair() {
     let (f1, f2) = make_test_files();
-    let result = ComparisonResult {
+    let results = vec![ComparisonResult {
         f1: &f1,
         f2: &f2,
         runs: vec![
@@ -275,14 +275,15 @@ fn test_format_json_multiple_matches_same_pair() {
                 r2: Range::new(3, 5),
             },
         ],
-    };
+    }];
 
-    let output = format_json(&[result], 2, false, 2, 1);
+    let groups = group_duplicates(&results, 2);
+    let output = format_json(&groups, &results, false, 2, 1);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-    // Should have 2 matches in the matches array
-    let matches = &parsed["duplicates"][0]["matches"];
-    assert_eq!(matches.as_array().unwrap().len(), 2);
+    // Should have 2 independent groups (two different regions)
+    assert_eq!(parsed["summary"]["duplicate_groups"], 2);
+    assert_eq!(parsed["duplicates"].as_array().unwrap().len(), 2);
 }
 
 // ==================== Regex filtering tests ====================
@@ -341,7 +342,6 @@ fn test_format_text_regex_filters_matches() {
         f1: &f1,
         f2: &f2,
         runs: vec![
-            // Match starting with "def hello():"
             LineRange::Same {
                 r1: Range::new(0, 3),
                 r2: Range::new(0, 3),
@@ -350,7 +350,6 @@ fn test_format_text_regex_filters_matches() {
                 r1: Range::new(3, 4),
                 r2: Range::new(3, 4),
             },
-            // Match starting with "class MyClass:"
             LineRange::Same {
                 r1: Range::new(4, 7),
                 r2: Range::new(4, 7),
@@ -358,15 +357,15 @@ fn test_format_text_regex_filters_matches() {
         ],
     };
 
-    // Filter to only show matches starting with "def"
     let regex = Regex::new(r"^def ").unwrap();
     filter_by_regex(&mut result, &regex);
-    let output = format_text(&[result], 3, false, 2, 1);
+    let results = vec![result];
+    let groups = group_duplicates(&results, 3);
+    let output = format_text(&groups, &results, false, 2, 1);
 
     assert!(output.contains("Duplicate Code Found"));
     assert!(output.contains("3 lines"));
-    // Should only have 1 match (the def match), not 2
-    assert!(output.contains("1 duplicate regions"));
+    assert!(output.contains("1 duplicate groups"));
 }
 
 #[test]
@@ -375,20 +374,18 @@ fn test_format_text_regex_filters_all() {
     let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
-        runs: vec![
-            LineRange::Same {
-                r1: Range::new(4, 7),
-                r2: Range::new(4, 7),
-            },
-        ],
+        runs: vec![LineRange::Same {
+            r1: Range::new(4, 7),
+            r2: Range::new(4, 7),
+        }],
     };
 
-    // Filter to only show matches starting with "def" (but match starts with "class")
     let regex = Regex::new(r"^def ").unwrap();
     filter_by_regex(&mut result, &regex);
-    let output = format_text(&[result], 3, false, 2, 1);
+    let results = vec![result];
+    let groups = group_duplicates(&results, 3);
+    let output = format_text(&groups, &results, false, 2, 1);
 
-    // Should show "No duplicate code found" because regex filters out all matches
     assert!(output.contains("No duplicate code found"));
 }
 
@@ -414,18 +411,18 @@ fn test_format_json_regex_filters_matches() {
         ],
     };
 
-    // Filter to only show matches starting with "class"
     let regex = Regex::new(r"^class ").unwrap();
     filter_by_regex(&mut result, &regex);
-    let output = format_json(&[result], 3, false, 2, 1);
+    let results = vec![result];
+    let groups = group_duplicates(&results, 3);
+    let output = format_json(&groups, &results, false, 2, 1);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-    // Should only have 1 match (the class match)
-    assert_eq!(parsed["summary"]["duplicates_found"], 1);
-    let matches = &parsed["duplicates"][0]["matches"];
-    assert_eq!(matches.as_array().unwrap().len(), 1);
+    assert_eq!(parsed["summary"]["duplicate_groups"], 1);
+    let locations = &parsed["duplicates"][0]["locations"];
+    assert_eq!(locations.as_array().unwrap().len(), 2);
     // The match should start at line 5 (1-indexed)
-    assert_eq!(parsed["duplicates"][0]["matches"][0]["file1_range"]["start"], 5);
+    assert_eq!(locations[0]["start"], 5);
 }
 
 #[test]
@@ -434,22 +431,20 @@ fn test_format_json_regex_filters_all() {
     let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
-        runs: vec![
-            LineRange::Same {
-                r1: Range::new(0, 3),
-                r2: Range::new(0, 3),
-            },
-        ],
+        runs: vec![LineRange::Same {
+            r1: Range::new(0, 3),
+            r2: Range::new(0, 3),
+        }],
     };
 
-    // Filter with regex that matches nothing
     let regex = Regex::new(r"^struct ").unwrap();
     filter_by_regex(&mut result, &regex);
-    let output = format_json(&[result], 3, false, 2, 1);
+    let results = vec![result];
+    let groups = group_duplicates(&results, 3);
+    let output = format_json(&groups, &results, false, 2, 1);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-    // Should have no duplicates
-    assert_eq!(parsed["summary"]["duplicates_found"], 0);
+    assert_eq!(parsed["summary"]["duplicate_groups"], 0);
     assert!(parsed["duplicates"].as_array().unwrap().is_empty());
 }
 
@@ -459,17 +454,17 @@ fn test_format_text_regex_verbose_shows_content() {
     let mut result = ComparisonResult {
         f1: &f1,
         f2: &f2,
-        runs: vec![
-            LineRange::Same {
-                r1: Range::new(0, 3),
-                r2: Range::new(0, 3),
-            },
-        ],
+        runs: vec![LineRange::Same {
+            r1: Range::new(0, 3),
+            r2: Range::new(0, 3),
+        }],
     };
 
     let regex = Regex::new(r"^def ").unwrap();
     filter_by_regex(&mut result, &regex);
-    let output = format_text(&[result], 3, true, 2, 1);
+    let results = vec![result];
+    let groups = group_duplicates(&results, 3);
+    let output = format_text(&groups, &results, true, 2, 1);
 
     assert!(output.contains("def hello():"));
     assert!(output.contains("print(\"Hello\")"));

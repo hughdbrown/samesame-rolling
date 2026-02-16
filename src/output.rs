@@ -2,49 +2,15 @@
 
 use serde::Serialize;
 
-use crate::types::{ComparisonResult, LineRange, Range};
-
-/// A single match between two files for JSON output.
-#[derive(Serialize)]
-pub struct MatchInfo {
-    pub lines: usize,
-    pub file1_range: RangeInfo,
-    pub file2_range: RangeInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<Vec<String>>,
-}
-
-/// Range information for JSON output (1-based line numbers for user display).
-#[derive(Serialize)]
-pub struct RangeInfo {
-    pub start: usize,
-    pub end: usize,
-}
-
-impl From<&Range> for RangeInfo {
-    fn from(r: &Range) -> Self {
-        // Convert to 1-based line numbers for display
-        RangeInfo {
-            start: r.start + 1,
-            end: r.end,
-        }
-    }
-}
-
-/// A duplicate found between two files for JSON output.
-#[derive(Serialize)]
-pub struct DuplicateInfo {
-    pub file1: String,
-    pub file2: String,
-    pub matches: Vec<MatchInfo>,
-}
+use crate::grouping::{DuplicateGroup, GroupInfo, LocationInfo};
+use crate::types::ComparisonResult;
 
 /// Summary statistics for JSON output.
 #[derive(Serialize)]
 pub struct Summary {
     pub files_analyzed: usize,
     pub pairs_compared: usize,
-    pub duplicates_found: usize,
+    pub duplicate_groups: usize,
     pub total_duplicate_lines: usize,
 }
 
@@ -53,93 +19,71 @@ pub struct Summary {
 pub struct JsonOutput {
     pub version: String,
     pub summary: Summary,
-    pub duplicates: Vec<DuplicateInfo>,
+    pub duplicates: Vec<GroupInfo>,
 }
 
 /// Format results as human-readable text.
 pub fn format_text(
+    groups: &[DuplicateGroup],
     results: &[ComparisonResult<'_>],
-    min_match: usize,
     verbose: bool,
     files_count: usize,
     pairs_count: usize,
 ) -> String {
     let mut output = String::new();
 
-    let significant_results: Vec<_> = results
-        .iter()
-        .filter(|r| r.has_significant_matches(min_match))
-        .collect();
-
-    if significant_results.is_empty() {
-        output.push_str("No duplicate code found.\n");
-        return output;
-    }
-
-    let mut total_duplicate_lines = 0usize;
-    let mut total_matches = 0usize;
-
-    let mut matches_output = String::new();
-
-    for result in &significant_results {
-        let matches = result.significant_matches(min_match);
-
-        for m in &matches {
-            if let LineRange::Same { r1, r2 } = m {
-                total_duplicate_lines += r1.len();
-                total_matches += 1;
-
-                matches_output.push_str(&format!(
-                    "Files: {} <-> {}\n",
-                    result.f1.filename.display(),
-                    result.f2.filename.display()
-                ));
-
-                matches_output.push_str(&format!(
-                    "Match: {} lines ({}:{}-{}, {}:{}-{})\n",
-                    r1.len(),
-                    result.f1.filename.file_name().unwrap_or_default().to_string_lossy(),
-                    r1.start + 1,
-                    r1.end,
-                    result.f2.filename.file_name().unwrap_or_default().to_string_lossy(),
-                    r2.start + 1,
-                    r2.end,
-                ));
-
-                if verbose {
-                    matches_output.push('\n');
-                    let offset2 = r2.start as isize - r1.start as isize;
-                    for i in r1.start..r1.end {
-                        let j = (i as isize + offset2) as usize;
-                        if i < result.f1.lines.len() {
-                            matches_output.push_str(&format!(
-                                "  {:>4} | {:>4} | {}\n",
-                                i + 1,
-                                j + 1,
-                                result.f1.lines[i]
-                            ));
-                        }
-                    }
-                }
-
-                matches_output.push_str("\n---\n\n");
-            }
-        }
-    }
-
-    if total_matches == 0 {
+    if groups.is_empty() {
         output.push_str("No duplicate code found.\n");
         return output;
     }
 
     output.push_str("=== Duplicate Code Found ===\n\n");
-    output.push_str(&matches_output);
+
+    let mut total_duplicate_lines = 0usize;
+
+    for group in groups {
+        total_duplicate_lines += group.line_count;
+
+        output.push_str(&format!(
+            "{} lines duplicated across {} files:\n",
+            group.line_count,
+            group.locations.len(),
+        ));
+
+        for (path, start, end) in &group.locations {
+            output.push_str(&format!(
+                "  {}  lines {}-{}\n",
+                path.display(),
+                start + 1,
+                end,
+            ));
+        }
+
+        if verbose {
+            // Show the duplicated content once, from the first source
+            let result = &results[group.source_result_index];
+            let (file, r1_start) = {
+                // Use f1's lines from the source result
+                (&result.f1.lines, group.locations[0].1)
+            };
+            let r1_end = group.locations[0].2;
+
+            output.push('\n');
+            for i in r1_start..r1_end {
+                if i < file.len() {
+                    output.push_str(&format!("  {:>4} | {}\n", i + 1, file[i]));
+                }
+            }
+        }
+
+        output.push_str("\n---\n\n");
+    }
 
     output.push_str(&format!(
-        "Summary: {} files analyzed, {} pairs compared, {} duplicate regions ({} lines)\n",
+        "Summary: {} files analyzed, {} pairs compared, {} duplicate groups ({} lines)\n",
         files_count,
         pairs_count,
-        total_matches,
+        groups.len(),
         total_duplicate_lines,
     ));
 
@@ -148,61 +92,51 @@ pub fn format_text(
 
 /// Format results as JSON.
 pub fn format_json(
+    groups: &[DuplicateGroup],
     results: &[ComparisonResult<'_>],
-    min_match: usize,
     verbose: bool,
     files_count: usize,
     pairs_count: usize,
 ) -> String {
-    let mut duplicates = Vec::new();
     let mut total_duplicate_lines = 0usize;
 
-    for result in results {
-        let matches = result.significant_matches(min_match);
+    let duplicates: Vec<GroupInfo> = groups
+        .iter()
+        .map(|group| {
+            total_duplicate_lines += group.line_count;
 
-        if matches.is_empty() {
-            continue;
-        }
+            let locations: Vec<LocationInfo> = group
+                .locations
+                .iter()
+                .map(|(path, start, end)| LocationInfo {
+                    file: path.display().to_string(),
+                    start: start + 1, // 1-based for display
+                    end: *end,
+                })
+                .collect();
 
-        let match_infos: Vec<MatchInfo> = matches
-            .iter()
-            .filter_map(|m| {
-                if let LineRange::Same { r1, r2 } = m {
-                    total_duplicate_lines += r1.len();
+            let content = if verbose {
+                let result = &results[group.source_result_index];
+                let (start, end) = (group.locations[0].1, group.locations[0].2);
+                Some(result.f1.lines[start..end].to_vec())
+            } else {
+                None
+            };
 
-                    let content = if verbose {
-                        Some(result.f1.lines[r1.start..r1.end].to_vec())
-                    } else {
-                        None
-                    };
-
-                    Some(MatchInfo {
-                        lines: r1.len(),
-                        file1_range: r1.into(),
-                        file2_range: r2.into(),
-                        content,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if !match_infos.is_empty() {
-            duplicates.push(DuplicateInfo {
-                file1: result.f1.filename.display().to_string(),
-                file2: result.f2.filename.display().to_string(),
-                matches: match_infos,
-            });
-        }
-    }
+            GroupInfo {
+                lines: group.line_count,
+                locations,
+                content,
+            }
+        })
+        .collect();
 
     let output = JsonOutput {
         version: env!("CARGO_PKG_VERSION").to_string(),
         summary: Summary {
             files_analyzed: files_count,
             pairs_compared: pairs_count,
-            duplicates_found: duplicates.len(),
+            duplicate_groups: duplicates.len(),
             total_duplicate_lines,
         },
         duplicates,

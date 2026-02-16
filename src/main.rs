@@ -11,6 +11,7 @@ use samesame::diff::compare_files;
 use samesame::discovery::{discover_files, generate_pairs};
 use samesame::error::SameError;
 use samesame::file::read_file_if_text;
+use samesame::grouping::group_duplicates;
 use samesame::output::{format_json, format_text};
 use samesame::types::{ComparisonResult, FileDescription, LineRange};
 
@@ -101,30 +102,29 @@ fn run(args: &Args) -> Result<bool, SameError> {
         .map(|&(i, j)| compare_files(&files[i], &files[j]))
         .collect();
 
-    // Apply regex filter early to avoid processing filtered-out matches in formatting
+    // Apply regex filter early to avoid processing filtered-out matches
     if let Some(ref regex) = args.regex {
         for result in &mut results {
             filter_runs_by_regex(result, regex);
         }
     }
 
-    // Check if any duplicates found
-    let has_duplicates = results
-        .iter()
-        .any(|r| r.has_significant_matches(args.min_match));
+    // Group pairwise results into deduplicated groups
+    let groups = group_duplicates(&results, args.min_match);
+    let has_duplicates = !groups.is_empty();
 
     // Format and print output
     let output = match args.format {
         OutputFormat::Text => format_text(
+            &groups,
             &results,
-            args.min_match,
             args.verbose,
             files.len(),
             pairs_count,
         ),
         OutputFormat::Json => format_json(
+            &groups,
             &results,
-            args.min_match,
             args.verbose,
             files.len(),
             pairs_count,

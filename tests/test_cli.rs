@@ -64,7 +64,7 @@ fn test_json_output_format() {
         .args(["-d", dir.path().to_str().unwrap(), "-m", "3", "-f", "json", "-q"])
         .assert()
         .code(1)
-        .stdout(predicate::str::contains("\"duplicates_found\""));
+        .stdout(predicate::str::contains("\"duplicate_groups\""));
 }
 
 #[test]

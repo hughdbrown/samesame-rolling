@@ -5,5 +5,7 @@ pub mod diff;
 pub mod discovery;
 pub mod error;
 pub mod file;
+pub mod grouping;
 pub mod output;
 pub mod types;
+pub mod union_find;
