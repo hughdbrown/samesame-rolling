@@ -4,16 +4,13 @@ use std::process::ExitCode;
 
 use rayon::prelude::*;
 
-use regex::Regex;
-
 use samesame::cli::{Args, OutputFormat};
-use samesame::diff::compare_files;
-use samesame::discovery::{discover_files, generate_pairs};
+use samesame::discovery::discover_files;
 use samesame::error::SameError;
 use samesame::file::read_file_if_text;
-use samesame::grouping::group_duplicates;
 use samesame::output::{format_json, format_text};
-use samesame::types::{ComparisonResult, FileDescription, LineRange};
+use samesame::rolling_hash::{find_duplicates, DuplicateGroup};
+use samesame::types::FileDescription;
 
 fn main() -> ExitCode {
     let args = Args::parse_args();
@@ -33,19 +30,50 @@ fn main() -> ExitCode {
     }
 }
 
-/// Remove `Same` runs whose first line doesn't match the regex,
-/// converting them to `Diff` runs so they are ignored by output formatting.
-fn filter_runs_by_regex(result: &mut ComparisonResult<'_>, regex: &Regex) {
-    result.runs.retain(|run| match run {
-        LineRange::Same { r1, .. } => {
-            if r1.start < result.f1.lines.len() {
-                regex.is_match(&result.f1.lines[r1.start])
-            } else {
-                false
+/// Filter duplicate groups by regex, keeping only groups whose first line
+/// at the first location matches the pattern.
+fn filter_groups_by_regex(
+    groups: &mut Vec<DuplicateGroup>,
+    regex: &regex::Regex,
+    files: &[FileDescription],
+    registry: &samesame::rolling_hash::FileRegistry,
+) {
+    groups.retain(|group| {
+        if let Some((path, start, _end)) = group.locations.first() {
+            // Find the FileDescription for this path
+            for file in files {
+                if &file.filename == path {
+                    if start < &file.lines.len() {
+                        return regex.is_match(&file.lines[*start]);
+                    }
+                }
+            }
+            // If file not found (shouldn't happen), keep the group
+            let _ = (registry, path); // suppress unused warning
+            true
+        } else {
+            false
+        }
+    });
+}
+
+/// Populate content for verbose output by looking up lines from FileDescriptions.
+fn populate_content(
+    groups: &mut [DuplicateGroup],
+    files: &[FileDescription],
+) {
+    for group in groups.iter_mut() {
+        if let Some((path, start, end)) = group.locations.first() {
+            for file in files {
+                if &file.filename == path {
+                    if *end <= file.lines.len() {
+                        group.content = Some(file.lines[*start..*end].to_vec());
+                    }
+                    break;
+                }
             }
         }
-        LineRange::Diff { .. } => true,
-    });
+    }
 }
 
 fn run(args: &Args) -> Result<bool, SameError> {
@@ -88,46 +116,36 @@ fn run(args: &Args) -> Result<bool, SameError> {
         eprintln!("Loaded {} text files", files.len());
     }
 
-    // Generate pairs for comparison
-    let pairs = generate_pairs(files.len());
-    let pairs_count = pairs.len();
+    // Find duplicates using rolling hash
+    let (registry, mut groups) = find_duplicates(&files, args.min_match);
 
     if !args.quiet {
-        eprintln!("Comparing {} file pairs", pairs_count);
+        eprintln!("Found {} duplicate groups", groups.len());
     }
 
-    // Compare pairs in parallel
-    let mut results: Vec<ComparisonResult<'_>> = pairs
-        .par_iter()
-        .map(|&(i, j)| compare_files(&files[i], &files[j]))
-        .collect();
-
-    // Apply regex filter early to avoid processing filtered-out matches
+    // Apply regex filter
     if let Some(ref regex) = args.regex {
-        for result in &mut results {
-            filter_runs_by_regex(result, regex);
-        }
+        filter_groups_by_regex(&mut groups, regex, &files, &registry);
     }
 
-    // Group pairwise results into deduplicated groups
-    let groups = group_duplicates(&results, args.min_match);
+    // Populate content for verbose output
+    if args.verbose {
+        populate_content(&mut groups, &files);
+    }
+
     let has_duplicates = !groups.is_empty();
 
     // Format and print output
     let output = match args.format {
         OutputFormat::Text => format_text(
             &groups,
-            &results,
             args.verbose,
             files.len(),
-            pairs_count,
         ),
         OutputFormat::Json => format_json(
             &groups,
-            &results,
             args.verbose,
             files.len(),
-            pairs_count,
         ),
     };
 
