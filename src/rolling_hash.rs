@@ -1,12 +1,11 @@
 //! Rolling hash duplicate detection algorithm.
 //!
-//! Computes rolling XOR hash fingerprints over windows of `min_match` consecutive
+//! Computes Buzhash rolling fingerprints over windows of `min_match` consecutive
 //! lines and uses a hash table for O(1) duplicate block lookup.
 //!
-//! **Note:** XOR is order-independent, so permutations of the same set of line
-//! hashes produce the same rolling hash. This can yield false positives (lines
-//! `{A, B, C}` and `{C, B, A}` hash identically) but never false negatives.
-//! In practice, false positives are rare for real code.
+//! Buzhash uses position-dependent bit rotations (`rotate_left`) combined with
+//! XOR, making it order-sensitive: permuted lines produce different hashes.
+//! This eliminates the false positives that plain XOR produces for reordered code.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -68,12 +67,8 @@ impl FileRegistry {
 /// A rolling hash block descriptor identifying a window of consecutive lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BlockDescriptor {
-    /// XOR of per-line hashes for this window.
+    /// Buzhash of per-line hashes for this window (order-dependent).
     pub(crate) hash: u64,
-    /// Hash of the first line in the window.
-    pub(crate) first_hash: u64,
-    /// Hash of the last line in the window.
-    pub(crate) last_hash: u64,
     /// File number from the FileRegistry.
     pub(crate) file_num: usize,
     /// Starting line index (0-based, inclusive).
@@ -82,10 +77,12 @@ pub(crate) struct BlockDescriptor {
     pub(crate) end: usize,
 }
 
-/// Computes rolling XOR hash blocks over a sliding window of `min_match` lines.
+/// Computes Buzhash rolling hash blocks over a sliding window of `min_match` lines.
 ///
-/// Returns one `BlockDescriptor` per window position. If the file has fewer
-/// than `min_match` lines, returns an empty Vec.
+/// Buzhash uses position-dependent bit rotations so that permuted lines
+/// produce different hashes (unlike plain XOR). Returns one `BlockDescriptor`
+/// per window position. If the file has fewer than `min_match` lines,
+/// returns an empty Vec.
 pub(crate) fn compute_rolling_hashes(
     hashes: &[u64],
     file_num: usize,
@@ -99,29 +96,28 @@ pub(crate) fn compute_rolling_hashes(
     let num_blocks: usize = n - min_match + 1;
     let mut blocks: Vec<BlockDescriptor> = Vec::with_capacity(num_blocks);
 
-    // Compute the first window's hash
+    // Compute the first window's Buzhash:
+    // H = rot^(k-1)(h[0]) ^ rot^(k-2)(h[1]) ^ ... ^ rot^0(h[k-1])
     let mut current_hash: u64 = 0;
-    for hash in hashes.iter().take(min_match) {
-        current_hash ^= hash;
+    for (i, &hash) in hashes[..min_match].iter().enumerate() {
+        current_hash ^= hash.rotate_left((min_match - 1 - i) as u32);
     }
 
     blocks.push(BlockDescriptor {
         hash: current_hash,
-        first_hash: hashes[0],
-        last_hash: hashes[min_match - 1],
         file_num,
         start: 0,
         end: min_match,
     });
 
-    // Slide the window: remove outgoing line, add incoming line
+    // Slide the window using Buzhash update:
+    // H_new = rot(H) ^ rot^k(h_out) ^ h_in
     for i in 1..num_blocks {
-        current_hash ^= hashes[i - 1]; // remove outgoing
-        current_hash ^= hashes[i + min_match - 1]; // add incoming
+        current_hash = current_hash.rotate_left(1)
+            ^ hashes[i - 1].rotate_left(min_match as u32)
+            ^ hashes[i + min_match - 1];
         blocks.push(BlockDescriptor {
             hash: current_hash,
-            first_hash: hashes[i],
-            last_hash: hashes[i + min_match - 1],
             file_num,
             start: i,
             end: i + min_match,
@@ -143,15 +139,13 @@ pub struct DuplicateGroup {
     pub content: Option<Vec<String>>,
 }
 
-/// Composite key for grouping blocks by XOR hash, first line hash, and last line hash.
+/// Key for grouping blocks by Buzhash value.
 ///
-/// Requiring all three to match reduces false positives from the order-independent
-/// XOR hash (e.g., sliding over blank lines that differ only in position).
+/// Since Buzhash is order-dependent (uses position-based bit rotations),
+/// the hash alone is sufficient to identify matching windows.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BlockGroupKey {
     hash: u64,
-    first_hash: u64,
-    last_hash: u64,
 }
 
 /// Groups block descriptors by composite key, keeping only groups with 2+ entries.
@@ -163,11 +157,7 @@ pub(crate) fn group_blocks(
 ) -> HashMap<BlockGroupKey, Vec<BlockDescriptor>> {
     let mut groups: HashMap<BlockGroupKey, Vec<BlockDescriptor>> = HashMap::new();
     for block in blocks {
-        let key = BlockGroupKey {
-            hash: block.hash,
-            first_hash: block.first_hash,
-            last_hash: block.last_hash,
-        };
+        let key = BlockGroupKey { hash: block.hash };
         groups.entry(key).or_default().push(block);
     }
     // Keep only groups with 2+ entries (actual duplicates)
@@ -531,10 +521,25 @@ mod tests {
         let hashes: Vec<u64> = vec![1, 2, 3, 4, 5];
         let blocks = compute_rolling_hashes(&hashes, 0, 5);
         assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].hash, 1 ^ 2 ^ 3 ^ 4 ^ 5);
+        // Buzhash: rot^4(1) ^ rot^3(2) ^ rot^2(3) ^ rot^1(4) ^ rot^0(5)
+        let expected: u64 = 1u64.rotate_left(4)
+            ^ 2u64.rotate_left(3)
+            ^ 3u64.rotate_left(2)
+            ^ 4u64.rotate_left(1)
+            ^ 5;
+        assert_eq!(blocks[0].hash, expected);
         assert_eq!(blocks[0].file_num, 0);
         assert_eq!(blocks[0].start, 0);
         assert_eq!(blocks[0].end, 5);
+    }
+
+    /// Computes the expected Buzhash for a window of hashes.
+    fn expected_buzhash(window: &[u64]) -> u64 {
+        let k: usize = window.len();
+        window
+            .iter()
+            .enumerate()
+            .fold(0u64, |acc, (i, &h)| acc ^ h.rotate_left((k - 1 - i) as u32))
     }
 
     #[test]
@@ -542,10 +547,10 @@ mod tests {
         let hashes: Vec<u64> = vec![10, 20, 30, 40, 50, 60, 70, 80];
         let blocks = compute_rolling_hashes(&hashes, 0, 5);
         assert_eq!(blocks.len(), 4); // 8 - 5 + 1 = 4
-        assert_eq!(blocks[0].hash, 10 ^ 20 ^ 30 ^ 40 ^ 50);
-        assert_eq!(blocks[1].hash, 20 ^ 30 ^ 40 ^ 50 ^ 60);
-        assert_eq!(blocks[2].hash, 30 ^ 40 ^ 50 ^ 60 ^ 70);
-        assert_eq!(blocks[3].hash, 40 ^ 50 ^ 60 ^ 70 ^ 80);
+        assert_eq!(blocks[0].hash, expected_buzhash(&[10, 20, 30, 40, 50]));
+        assert_eq!(blocks[1].hash, expected_buzhash(&[20, 30, 40, 50, 60]));
+        assert_eq!(blocks[2].hash, expected_buzhash(&[30, 40, 50, 60, 70]));
+        assert_eq!(blocks[3].hash, expected_buzhash(&[40, 50, 60, 70, 80]));
         assert_eq!(blocks[0].start, 0);
         assert_eq!(blocks[1].start, 1);
         assert_eq!(blocks[2].start, 2);
@@ -565,11 +570,9 @@ mod tests {
         let min_match: usize = 5;
         let blocks = compute_rolling_hashes(&hashes, 0, min_match);
 
-        // Verify each block's hash equals manual XOR of the window
+        // Verify each block's hash equals manual Buzhash of the window
         for block in &blocks {
-            let expected: u64 = hashes[block.start..block.end]
-                .iter()
-                .fold(0u64, |acc, &h| acc ^ h);
+            let expected: u64 = expected_buzhash(&hashes[block.start..block.end]);
             assert_eq!(
                 block.hash, expected,
                 "Block at start={} has wrong hash",
@@ -743,14 +746,14 @@ mod tests {
     #[test]
     fn test_find_duplicates_below_threshold() {
         // Only 3 shared lines, min_match is 5
-        // Use values where XOR of differing lines produces different block hashes
         let f1 = make_file_desc("a.rs", vec![10, 20, 30, 100, 200]);
         let f2 = make_file_desc("b.rs", vec![10, 20, 30, 300, 400]);
         let files = vec![f1, f2];
 
-        // Verify the block hashes are actually different
-        let hash1: u64 = 10 ^ 20 ^ 30 ^ 100 ^ 200;
-        let hash2: u64 = 10 ^ 20 ^ 30 ^ 300 ^ 400;
+        // Verify the block hashes are actually different (Buzhash is order-dependent,
+        // so differing values at the same positions always produce different hashes)
+        let hash1: u64 = expected_buzhash(&[10, 20, 30, 100, 200]);
+        let hash2: u64 = expected_buzhash(&[10, 20, 30, 300, 400]);
         assert_ne!(hash1, hash2, "Test setup: block hashes must differ");
 
         let (_reg, groups) = find_duplicates(&files, 5);
@@ -1046,11 +1049,38 @@ mod tests {
         all_blocks.extend(compute_rolling_hashes(&hashes, 0, 5));
 
         let groups = group_blocks(all_blocks);
-        // The block XOR(10,20,30,40,50) appears at positions 0 and 6
+        // The block Buzhash(10,20,30,40,50) appears at positions 0 and 6
         assert!(!groups.is_empty());
         let matching_group = groups
             .values()
             .find(|g| g.iter().any(|b| b.start == 0) && g.iter().any(|b| b.start == 6));
         assert!(matching_group.is_some());
+    }
+
+    #[test]
+    fn test_buzhash_order_dependent() {
+        // Permuted lines must produce DIFFERENT hashes (unlike XOR)
+        let original: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let permuted: Vec<u64> = vec![30, 10, 20, 40, 50];
+
+        let blocks_orig = compute_rolling_hashes(&original, 0, 5);
+        let blocks_perm = compute_rolling_hashes(&permuted, 1, 5);
+
+        assert_eq!(blocks_orig.len(), 1);
+        assert_eq!(blocks_perm.len(), 1);
+        assert_ne!(
+            blocks_orig[0].hash, blocks_perm[0].hash,
+            "Buzhash must distinguish permuted sequences"
+        );
+
+        // Group them: should produce NO groups (hashes differ)
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(blocks_orig);
+        all_blocks.extend(blocks_perm);
+        let groups = group_blocks(all_blocks);
+        assert!(
+            groups.is_empty(),
+            "Permuted lines should not be grouped as duplicates"
+        );
     }
 }

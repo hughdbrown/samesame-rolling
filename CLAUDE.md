@@ -38,14 +38,14 @@ The application follows a pipeline architecture:
 1. **CLI Parsing** (`cli.rs`) → Parse arguments with clap derive macros
 2. **File Discovery** (`discovery.rs`) → Find files via explicit paths or glob patterns
 3. **File Processing** (`file.rs`) → Read files, normalize lines, compute BLAKE3 hashes
-4. **Duplicate Detection** (`rolling_hash.rs`) → Rolling XOR hash to find duplicate regions
+4. **Duplicate Detection** (`rolling_hash.rs`) → Buzhash rolling hash to find duplicate regions
 5. **Output Formatting** (`output.rs`) → Render results as text or JSON
 
 ### Key Data Flow
 
 ```
 Files → FileDescription (path + line hashes + line content)
-     → find_duplicates() computes rolling XOR hashes over sliding windows
+     → find_duplicates() computes Buzhash rolling hashes over sliding windows
      → Groups blocks by hash (O(1) lookup), extracts match pairs
      → Merges consecutive runs into extended regions
      → Consolidates pairwise regions into multi-file DuplicateGroups
@@ -61,14 +61,14 @@ Files → FileDescription (path + line hashes + line content)
 
 ### Rolling Hash Algorithm (`rolling_hash.rs`)
 
-1. Compute rolling XOR hash over windows of `min_match` consecutive line hashes
+1. Compute Buzhash over windows of `min_match` consecutive line hashes
 2. Group all blocks by hash — entries with 2+ blocks are potential duplicates
 3. Extract pairwise matches grouped by (file_a, file_b, offset)
 4. Merge consecutive match positions into extended regions
 5. Consolidate pairwise regions into multi-file groups using union-find
 
-XOR is order-independent, so permuted lines can produce false positives,
-but never false negatives. In practice this is rare for real code.
+Buzhash uses position-dependent bit rotations (`rotate_left`) combined with
+XOR, making it order-sensitive: permuted lines produce different hashes.
 
 ### Parallelism
 
