@@ -106,6 +106,18 @@ pub fn compute_rolling_hashes(
     blocks
 }
 
+/// A group of file locations that all contain the same duplicated code.
+#[derive(Debug, Clone)]
+pub struct DuplicateGroup {
+    /// Number of duplicated lines in this region.
+    pub line_count: usize,
+    /// All file locations containing this duplicate, sorted for deterministic output.
+    /// Each entry is (filename, start, end) using 0-based half-open ranges.
+    pub locations: Vec<(PathBuf, usize, usize)>,
+    /// Pre-populated line content for verbose output (None if not verbose).
+    pub content: Option<Vec<String>>,
+}
+
 /// Groups block descriptors by hash, keeping only groups with 2+ entries.
 ///
 /// Returns a map from block hash to the list of block descriptors sharing
@@ -118,6 +130,42 @@ pub fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<BlockDescr
     // Keep only groups with 2+ entries (actual duplicates)
     groups.retain(|_, v| v.len() >= 2);
     groups
+}
+
+/// Converts hash groups into basic `DuplicateGroup` values (no merging).
+///
+/// Each hash group with 2+ entries becomes one `DuplicateGroup` with
+/// `min_match` lines. Groups are sorted by line count descending, then
+/// by first location for deterministic output.
+pub fn blocks_to_duplicate_groups(
+    groups: &HashMap<u64, Vec<BlockDescriptor>>,
+    registry: &FileRegistry,
+    min_match: usize,
+) -> Vec<DuplicateGroup> {
+    let mut result: Vec<DuplicateGroup> = groups
+        .values()
+        .map(|blocks| {
+            let mut locations: Vec<(PathBuf, usize, usize)> = blocks
+                .iter()
+                .map(|b| (registry.get_path(b.file_num).to_path_buf(), b.start, b.end))
+                .collect();
+            locations.sort();
+
+            DuplicateGroup {
+                line_count: min_match,
+                locations,
+                content: None,
+            }
+        })
+        .collect();
+
+    result.sort_by(|a, b| {
+        b.line_count
+            .cmp(&a.line_count)
+            .then_with(|| a.locations.cmp(&b.locations))
+    });
+
+    result
 }
 
 #[cfg(test)]
@@ -273,6 +321,59 @@ mod tests {
 
         let groups = group_blocks(all_blocks);
         assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn test_basic_duplicate_groups() {
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&shared, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 1, 5));
+
+        let mut reg = FileRegistry::new();
+        reg.register(PathBuf::from("a.rs"));
+        reg.register(PathBuf::from("b.rs"));
+
+        let groups = group_blocks(all_blocks);
+        let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
+        assert_eq!(dup_groups.len(), 1);
+        assert_eq!(dup_groups[0].line_count, 5);
+        assert_eq!(dup_groups[0].locations.len(), 2);
+        // Locations should be sorted: a.rs before b.rs
+        assert_eq!(dup_groups[0].locations[0].0, PathBuf::from("a.rs"));
+        assert_eq!(dup_groups[0].locations[1].0, PathBuf::from("b.rs"));
+    }
+
+    #[test]
+    fn test_basic_duplicate_groups_sorted() {
+        // Create two distinct shared blocks with different hash values
+        let shared_a: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let shared_b: Vec<u64> = vec![60, 70, 80, 90, 100];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&shared_a, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared_a, 1, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared_b, 2, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared_b, 3, 5));
+
+        let mut reg = FileRegistry::new();
+        reg.register(PathBuf::from("a.rs"));
+        reg.register(PathBuf::from("b.rs"));
+        reg.register(PathBuf::from("c.rs"));
+        reg.register(PathBuf::from("d.rs"));
+
+        let groups = group_blocks(all_blocks);
+        let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
+        assert_eq!(dup_groups.len(), 2);
+        // Both have same line_count=5, so sorted by first location
+        assert!(dup_groups[0].locations[0] <= dup_groups[1].locations[0]);
+    }
+
+    #[test]
+    fn test_basic_duplicate_groups_empty() {
+        let groups: HashMap<u64, Vec<BlockDescriptor>> = HashMap::new();
+        let reg = FileRegistry::new();
+        let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
+        assert!(dup_groups.is_empty());
     }
 
     #[test]
