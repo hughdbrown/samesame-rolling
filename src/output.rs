@@ -38,11 +38,7 @@ pub struct JsonOutput {
 }
 
 /// Format results as human-readable text.
-pub fn format_text(
-    groups: &[DuplicateGroup],
-    verbose: bool,
-    files_count: usize,
-) -> String {
+pub fn format_text(groups: &[DuplicateGroup], verbose: bool, files_count: usize) -> String {
     let mut output = String::new();
 
     if groups.is_empty() {
@@ -72,13 +68,11 @@ pub fn format_text(
             ));
         }
 
-        if verbose {
-            if let Some(ref content) = group.content {
-                let start_line = group.locations[0].1;
-                output.push('\n');
-                for (i, line) in content.iter().enumerate() {
-                    output.push_str(&format!("  {:>4} | {}\n", start_line + i + 1, line));
-                }
+        if verbose && let Some(ref content) = group.content {
+            let start_line = group.locations[0].1;
+            output.push('\n');
+            for (i, line) in content.iter().enumerate() {
+                output.push_str(&format!("  {:>4} | {}\n", start_line + i + 1, line));
             }
         }
 
@@ -96,11 +90,7 @@ pub fn format_text(
 }
 
 /// Format results as JSON.
-pub fn format_json(
-    groups: &[DuplicateGroup],
-    verbose: bool,
-    files_count: usize,
-) -> String {
+pub fn format_json(groups: &[DuplicateGroup], verbose: bool, files_count: usize) -> String {
     let mut total_duplicate_lines = 0usize;
 
     let duplicates: Vec<GroupInfo> = groups
@@ -118,11 +108,7 @@ pub fn format_json(
                 })
                 .collect();
 
-            let content = if verbose {
-                group.content.clone()
-            } else {
-                None
-            };
+            let content = if verbose { group.content.clone() } else { None };
 
             GroupInfo {
                 lines: group.line_count,

@@ -61,7 +61,15 @@ fn test_json_output_format() {
     create_duplicate_files(&dir);
 
     cmd()
-        .args(["-d", dir.path().to_str().unwrap(), "-m", "3", "-f", "json", "-q"])
+        .args([
+            "-d",
+            dir.path().to_str().unwrap(),
+            "-m",
+            "3",
+            "-f",
+            "json",
+            "-q",
+        ])
         .assert()
         .code(1)
         .stdout(predicate::str::contains("\"duplicate_groups\""));
@@ -86,14 +94,30 @@ fn test_regex_filter() {
 
     // Regex that matches - should find duplicates
     cmd()
-        .args(["-d", dir.path().to_str().unwrap(), "-m", "3", "-r", "^fn ", "-q"])
+        .args([
+            "-d",
+            dir.path().to_str().unwrap(),
+            "-m",
+            "3",
+            "-r",
+            "^fn ",
+            "-q",
+        ])
         .assert()
         .code(1)
         .stdout(predicate::str::contains("Duplicate Code Found"));
 
     // Regex that doesn't match - should find no duplicates
     cmd()
-        .args(["-d", dir.path().to_str().unwrap(), "-m", "3", "-r", "^class ", "-q"])
+        .args([
+            "-d",
+            dir.path().to_str().unwrap(),
+            "-m",
+            "3",
+            "-r",
+            "^class ",
+            "-q",
+        ])
         .assert()
         .code(0)
         .stdout(predicate::str::contains("No duplicate code found"));
@@ -134,16 +158,10 @@ fn test_explicit_file_args() {
 
 #[test]
 fn test_invalid_regex() {
-    cmd()
-        .args(["-r", "[invalid", "dummy.rs"])
-        .assert()
-        .code(2);
+    cmd().args(["-r", "[invalid", "dummy.rs"]).assert().code(2);
 }
 
 #[test]
 fn test_min_match_zero_rejected() {
-    cmd()
-        .args(["-m", "0", "dummy.rs"])
-        .assert()
-        .code(2);
+    cmd().args(["-m", "0", "dummy.rs"]).assert().code(2);
 }

@@ -9,7 +9,7 @@ use samesame::discovery::discover_files;
 use samesame::error::SameError;
 use samesame::file::read_file_if_text;
 use samesame::output::{format_json, format_text};
-use samesame::rolling_hash::{find_duplicates, DuplicateGroup};
+use samesame::rolling_hash::{DuplicateGroup, find_duplicates};
 use samesame::types::FileDescription;
 
 fn main() -> ExitCode {
@@ -42,10 +42,8 @@ fn filter_groups_by_regex(
         if let Some((path, start, _end)) = group.locations.first() {
             // Find the FileDescription for this path
             for file in files {
-                if &file.filename == path {
-                    if start < &file.lines.len() {
-                        return regex.is_match(&file.lines[*start]);
-                    }
+                if &file.filename == path && start < &file.lines.len() {
+                    return regex.is_match(&file.lines[*start]);
                 }
             }
             // If file not found (shouldn't happen), keep the group
@@ -58,10 +56,7 @@ fn filter_groups_by_regex(
 }
 
 /// Populate content for verbose output by looking up lines from FileDescriptions.
-fn populate_content(
-    groups: &mut [DuplicateGroup],
-    files: &[FileDescription],
-) {
+fn populate_content(groups: &mut [DuplicateGroup], files: &[FileDescription]) {
     for group in groups.iter_mut() {
         if let Some((path, start, end)) = group.locations.first() {
             for file in files {
@@ -78,11 +73,7 @@ fn populate_content(
 
 fn run(args: &Args) -> Result<bool, SameError> {
     // Discover files
-    let paths = discover_files(
-        &args.files,
-        args.directory.as_deref(),
-        &args.glob_pattern,
-    )?;
+    let paths = discover_files(&args.files, args.directory.as_deref(), &args.glob_pattern)?;
 
     if !args.quiet {
         eprintln!("Found {} files to analyze", paths.len());
@@ -137,16 +128,8 @@ fn run(args: &Args) -> Result<bool, SameError> {
 
     // Format and print output
     let output = match args.format {
-        OutputFormat::Text => format_text(
-            &groups,
-            args.verbose,
-            files.len(),
-        ),
-        OutputFormat::Json => format_json(
-            &groups,
-            args.verbose,
-            files.len(),
-        ),
+        OutputFormat::Text => format_text(&groups, args.verbose, files.len()),
+        OutputFormat::Json => format_json(&groups, args.verbose, files.len()),
     };
 
     println!("{}", output);

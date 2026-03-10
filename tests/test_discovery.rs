@@ -1,8 +1,6 @@
 //! Tests for file discovery and filtering.
 
-use samesame::discovery::{
-    deduplicate_paths, discover_files, is_hidden, is_symlink, scan_glob,
-};
+use samesame::discovery::{deduplicate_paths, discover_files, is_hidden, is_symlink, scan_glob};
 use samesame::error::SameError;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};

@@ -18,6 +18,12 @@ pub struct FileRegistry {
     num_to_name: Vec<PathBuf>,
 }
 
+impl Default for FileRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FileRegistry {
     /// Creates an empty file registry.
     pub fn new() -> Self {
@@ -47,6 +53,11 @@ impl FileRegistry {
     /// Returns the number of registered files.
     pub fn len(&self) -> usize {
         self.num_to_name.len()
+    }
+
+    /// Returns true if no files are registered.
+    pub fn is_empty(&self) -> bool {
+        self.num_to_name.is_empty()
     }
 }
 
@@ -332,10 +343,7 @@ type LocationKey = (usize, usize, usize);
 /// Two MergedRegions are grouped together if they share a common
 /// (file, start, end) location. This handles cases where 3+ files
 /// share the same duplicate region.
-fn consolidate_regions(
-    regions: Vec<MergedRegion>,
-    registry: &FileRegistry,
-) -> Vec<DuplicateGroup> {
+fn consolidate_regions(regions: Vec<MergedRegion>, registry: &FileRegistry) -> Vec<DuplicateGroup> {
     if regions.is_empty() {
         return Vec::new();
     }
@@ -409,9 +417,7 @@ fn consolidate_regions(
 
         let locations: Vec<(PathBuf, usize, usize)> = all_locations
             .into_iter()
-            .map(|(file_num, start, end)| {
-                (registry.get_path(file_num).to_path_buf(), start, end)
-            })
+            .map(|(file_num, start, end)| (registry.get_path(file_num).to_path_buf(), start, end))
             .collect();
 
         result.push(DuplicateGroup {
@@ -517,7 +523,11 @@ mod tests {
             let expected: u64 = hashes[block.start..block.end]
                 .iter()
                 .fold(0u64, |acc, &h| acc ^ h);
-            assert_eq!(block.hash, expected, "Block at start={} has wrong hash", block.start);
+            assert_eq!(
+                block.hash, expected,
+                "Block at start={} has wrong hash",
+                block.start
+            );
         }
     }
 
@@ -745,8 +755,10 @@ mod tests {
         reg.register(PathBuf::from("b.rs"));
 
         let regions = vec![MergedRegion {
-            file_a: 0, start_a: 0,
-            file_b: 1, start_b: 10,
+            file_a: 0,
+            start_a: 0,
+            file_b: 1,
+            start_b: 10,
             line_count: 7,
         }];
 
@@ -767,8 +779,20 @@ mod tests {
 
         // A:0-7 matches B:10-17, and A:0-7 matches C:20-27
         let regions = vec![
-            MergedRegion { file_a: 0, start_a: 0, file_b: 1, start_b: 10, line_count: 7 },
-            MergedRegion { file_a: 0, start_a: 0, file_b: 2, start_b: 20, line_count: 7 },
+            MergedRegion {
+                file_a: 0,
+                start_a: 0,
+                file_b: 1,
+                start_b: 10,
+                line_count: 7,
+            },
+            MergedRegion {
+                file_a: 0,
+                start_a: 0,
+                file_b: 2,
+                start_b: 20,
+                line_count: 7,
+            },
         ];
 
         let groups = consolidate_regions(regions, &reg);
@@ -788,8 +812,20 @@ mod tests {
 
         // A:0-5 matches B:0-5, C:10-15 matches D:10-15 (independent)
         let regions = vec![
-            MergedRegion { file_a: 0, start_a: 0, file_b: 1, start_b: 0, line_count: 5 },
-            MergedRegion { file_a: 2, start_a: 10, file_b: 3, start_b: 10, line_count: 5 },
+            MergedRegion {
+                file_a: 0,
+                start_a: 0,
+                file_b: 1,
+                start_b: 0,
+                line_count: 5,
+            },
+            MergedRegion {
+                file_a: 2,
+                start_a: 10,
+                file_b: 3,
+                start_b: 10,
+                line_count: 5,
+            },
         ];
 
         let groups = consolidate_regions(regions, &reg);
@@ -806,7 +842,11 @@ mod tests {
     #[test]
     fn test_merge_consecutive_two_blocks() {
         let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
-        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 10 };
+        let key = MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 10,
+        };
         pairs.insert(key, vec![0, 1]);
 
         let regions = merge_consecutive_runs(&pairs, 5);
@@ -819,7 +859,11 @@ mod tests {
     #[test]
     fn test_merge_consecutive_long_run() {
         let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
-        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        let key = MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 0,
+        };
         pairs.insert(key, vec![0, 1, 2, 3, 4]);
 
         let regions = merge_consecutive_runs(&pairs, 5);
@@ -830,7 +874,11 @@ mod tests {
     #[test]
     fn test_merge_gap_produces_two_regions() {
         let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
-        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        let key = MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 0,
+        };
         pairs.insert(key, vec![0, 1, 5, 6]);
 
         let regions = merge_consecutive_runs(&pairs, 5);
@@ -846,7 +894,11 @@ mod tests {
     #[test]
     fn test_merge_single_block() {
         let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
-        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 5 };
+        let key = MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 5,
+        };
         pairs.insert(key, vec![3]);
 
         let regions = merge_consecutive_runs(&pairs, 5);
@@ -859,7 +911,11 @@ mod tests {
     #[test]
     fn test_merge_duplicates_in_starts() {
         let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
-        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        let key = MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 0,
+        };
         // Duplicate start positions (can happen from multiple hash groups)
         pairs.insert(key, vec![0, 0, 1, 1, 2]);
 
@@ -880,7 +936,11 @@ mod tests {
 
         // One pair: (file 0, file 1, offset 0), with start position [0]
         assert_eq!(pairs.len(), 1);
-        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        let key = MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 0,
+        };
         assert!(pairs.contains_key(&key));
         assert_eq!(pairs[&key], vec![0]);
     }
@@ -898,9 +958,21 @@ mod tests {
 
         // Three pairs: (0,1), (0,2), (1,2)
         assert_eq!(pairs.len(), 3);
-        assert!(pairs.contains_key(&MatchPairKey { file_a: 0, file_b: 1, offset: 0 }));
-        assert!(pairs.contains_key(&MatchPairKey { file_a: 0, file_b: 2, offset: 0 }));
-        assert!(pairs.contains_key(&MatchPairKey { file_a: 1, file_b: 2, offset: 0 }));
+        assert!(pairs.contains_key(&MatchPairKey {
+            file_a: 0,
+            file_b: 1,
+            offset: 0
+        }));
+        assert!(pairs.contains_key(&MatchPairKey {
+            file_a: 0,
+            file_b: 2,
+            offset: 0
+        }));
+        assert!(pairs.contains_key(&MatchPairKey {
+            file_a: 1,
+            file_b: 2,
+            offset: 0
+        }));
     }
 
     #[test]
@@ -929,9 +1001,9 @@ mod tests {
         let groups = group_blocks(all_blocks);
         // The block XOR(10,20,30,40,50) appears at positions 0 and 6
         assert!(!groups.is_empty());
-        let matching_group = groups.values().find(|g| {
-            g.iter().any(|b| b.start == 0) && g.iter().any(|b| b.start == 6)
-        });
+        let matching_group = groups
+            .values()
+            .find(|g| g.iter().any(|b| b.start == 0) && g.iter().any(|b| b.start == 6));
         assert!(matching_group.is_some());
     }
 }

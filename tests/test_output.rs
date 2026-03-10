@@ -144,8 +144,16 @@ fn test_format_text_multiple_results_grouped() {
 #[test]
 fn test_format_json_multiple_matches_same_pair() {
     let groups = vec![
-        make_group(2, vec![("src/file1.rs", 0, 2), ("src/file2.rs", 0, 2)], None),
-        make_group(2, vec![("src/file1.rs", 3, 5), ("src/file2.rs", 3, 5)], None),
+        make_group(
+            2,
+            vec![("src/file1.rs", 0, 2), ("src/file2.rs", 0, 2)],
+            None,
+        ),
+        make_group(
+            2,
+            vec![("src/file1.rs", 3, 5), ("src/file2.rs", 3, 5)],
+            None,
+        ),
     ];
     let output = format_json(&groups, false, 2);
     let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -211,7 +219,11 @@ fn test_format_text_regex_verbose_shows_content() {
     let groups = vec![make_group(
         3,
         vec![("src/file1.py", 0, 3), ("src/file2.py", 0, 3)],
-        Some(vec!["def hello():", "    print(\"Hello\")", "    return None"]),
+        Some(vec![
+            "def hello():",
+            "    print(\"Hello\")",
+            "    return None",
+        ]),
     )];
     let output = format_text(&groups, true, 2);
     assert!(output.contains("def hello():"));
