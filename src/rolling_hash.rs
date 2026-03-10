@@ -70,6 +70,10 @@ impl FileRegistry {
 pub(crate) struct BlockDescriptor {
     /// XOR of per-line hashes for this window.
     pub(crate) hash: u64,
+    /// Hash of the first line in the window.
+    pub(crate) first_hash: u64,
+    /// Hash of the last line in the window.
+    pub(crate) last_hash: u64,
     /// File number from the FileRegistry.
     pub(crate) file_num: usize,
     /// Starting line index (0-based, inclusive).
@@ -103,6 +107,8 @@ pub(crate) fn compute_rolling_hashes(
 
     blocks.push(BlockDescriptor {
         hash: current_hash,
+        first_hash: hashes[0],
+        last_hash: hashes[min_match - 1],
         file_num,
         start: 0,
         end: min_match,
@@ -114,6 +120,8 @@ pub(crate) fn compute_rolling_hashes(
         current_hash ^= hashes[i + min_match - 1]; // add incoming
         blocks.push(BlockDescriptor {
             hash: current_hash,
+            first_hash: hashes[i],
+            last_hash: hashes[i + min_match - 1],
             file_num,
             start: i,
             end: i + min_match,
@@ -135,14 +143,32 @@ pub struct DuplicateGroup {
     pub content: Option<Vec<String>>,
 }
 
-/// Groups block descriptors by hash, keeping only groups with 2+ entries.
+/// Composite key for grouping blocks by XOR hash, first line hash, and last line hash.
 ///
-/// Returns a map from block hash to the list of block descriptors sharing
-/// that hash. Single-entry groups (no duplicates) are filtered out.
-pub(crate) fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<BlockDescriptor>> {
-    let mut groups: HashMap<u64, Vec<BlockDescriptor>> = HashMap::new();
+/// Requiring all three to match reduces false positives from the order-independent
+/// XOR hash (e.g., sliding over blank lines that differ only in position).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct BlockGroupKey {
+    hash: u64,
+    first_hash: u64,
+    last_hash: u64,
+}
+
+/// Groups block descriptors by composite key, keeping only groups with 2+ entries.
+///
+/// Returns a map from `BlockGroupKey` to the list of block descriptors sharing
+/// that key. Single-entry groups (no duplicates) are filtered out.
+pub(crate) fn group_blocks(
+    blocks: Vec<BlockDescriptor>,
+) -> HashMap<BlockGroupKey, Vec<BlockDescriptor>> {
+    let mut groups: HashMap<BlockGroupKey, Vec<BlockDescriptor>> = HashMap::new();
     for block in blocks {
-        groups.entry(block.hash).or_default().push(block);
+        let key = BlockGroupKey {
+            hash: block.hash,
+            first_hash: block.first_hash,
+            last_hash: block.last_hash,
+        };
+        groups.entry(key).or_default().push(block);
     }
     // Keep only groups with 2+ entries (actual duplicates)
     groups.retain(|_, v| v.len() >= 2);
@@ -156,7 +182,7 @@ pub(crate) fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<Blo
 /// by first location for deterministic output.
 #[cfg(test)]
 pub(crate) fn blocks_to_duplicate_groups(
-    groups: &HashMap<u64, Vec<BlockDescriptor>>,
+    groups: &HashMap<BlockGroupKey, Vec<BlockDescriptor>>,
     registry: &FileRegistry,
     min_match: usize,
 ) -> Vec<DuplicateGroup> {
@@ -201,7 +227,7 @@ struct MatchPairKey {
 /// locations. Each pair is keyed by the two file numbers and their relative
 /// offset (start_b - start_a). The value is a list of start positions in file_a.
 fn extract_match_pairs(
-    groups: &HashMap<u64, Vec<BlockDescriptor>>,
+    groups: &HashMap<BlockGroupKey, Vec<BlockDescriptor>>,
 ) -> HashMap<MatchPairKey, Vec<usize>> {
     let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
 
@@ -337,7 +363,19 @@ pub fn find_duplicates(
     }
 
     let pairs = extract_match_pairs(&groups);
-    let regions = merge_consecutive_runs(&pairs, min_match);
+    let mut regions = merge_consecutive_runs(&pairs, min_match);
+
+    // Discard same-file regions where the two ranges overlap.
+    // Overlapping self-matches are artifacts of the sliding window
+    // (e.g., brace-heavy code shifted by one line), not real duplicates.
+    regions.retain(|r| {
+        r.file_a != r.file_b || {
+            let end_a: usize = r.start_a + r.line_count;
+            let end_b: usize = r.start_b + r.line_count;
+            end_a <= r.start_b || end_b <= r.start_a
+        }
+    });
+
     let duplicate_groups = consolidate_regions(regions, &registry);
 
     (registry, duplicate_groups)
@@ -652,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_basic_duplicate_groups_empty() {
-        let groups: HashMap<u64, Vec<BlockDescriptor>> = HashMap::new();
+        let groups: HashMap<BlockGroupKey, Vec<BlockDescriptor>> = HashMap::new();
         let reg = FileRegistry::new();
         let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
         assert!(dup_groups.is_empty());
