@@ -210,6 +210,74 @@ fn extract_match_pairs(
     pairs
 }
 
+/// A merged region representing a duplicate span between two files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MergedRegion {
+    file_a: usize,
+    start_a: usize,
+    file_b: usize,
+    start_b: usize,
+    line_count: usize,
+}
+
+/// Merges consecutive match pairs into extended regions.
+///
+/// For each (file_a, file_b, offset) group, sorts start positions,
+/// deduplicates them, and finds maximal runs of consecutive integers.
+/// Each run of length L represents a duplicate of `min_match + L - 1` lines.
+fn merge_consecutive_runs(
+    pairs: &HashMap<MatchPairKey, Vec<usize>>,
+    min_match: usize,
+) -> Vec<MergedRegion> {
+    let mut regions: Vec<MergedRegion> = Vec::new();
+
+    for (key, starts) in pairs {
+        let mut sorted_starts: Vec<usize> = starts.clone();
+        sorted_starts.sort_unstable();
+        sorted_starts.dedup();
+
+        if sorted_starts.is_empty() {
+            continue;
+        }
+
+        // Find maximal runs of consecutive integers
+        let mut run_start: usize = sorted_starts[0];
+        let mut run_end: usize = sorted_starts[0];
+
+        for &s in &sorted_starts[1..] {
+            if s == run_end + 1 {
+                run_end = s;
+            } else {
+                // Emit the current run
+                let run_len: usize = run_end - run_start + 1;
+                let line_count: usize = min_match + run_len - 1;
+                regions.push(MergedRegion {
+                    file_a: key.file_a,
+                    start_a: run_start,
+                    file_b: key.file_b,
+                    start_b: (run_start as isize + key.offset) as usize,
+                    line_count,
+                });
+                run_start = s;
+                run_end = s;
+            }
+        }
+
+        // Emit the final run
+        let run_len: usize = run_end - run_start + 1;
+        let line_count: usize = min_match + run_len - 1;
+        regions.push(MergedRegion {
+            file_a: key.file_a,
+            start_a: run_start,
+            file_b: key.file_b,
+            start_b: (run_start as isize + key.offset) as usize,
+            line_count,
+        });
+    }
+
+    regions
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +484,71 @@ mod tests {
         let reg = FileRegistry::new();
         let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
         assert!(dup_groups.is_empty());
+    }
+
+    #[test]
+    fn test_merge_consecutive_two_blocks() {
+        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 10 };
+        pairs.insert(key, vec![0, 1]);
+
+        let regions = merge_consecutive_runs(&pairs, 5);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].line_count, 6); // 5 + 2 - 1
+        assert_eq!(regions[0].start_a, 0);
+        assert_eq!(regions[0].start_b, 10);
+    }
+
+    #[test]
+    fn test_merge_consecutive_long_run() {
+        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        pairs.insert(key, vec![0, 1, 2, 3, 4]);
+
+        let regions = merge_consecutive_runs(&pairs, 5);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].line_count, 9); // 5 + 5 - 1
+    }
+
+    #[test]
+    fn test_merge_gap_produces_two_regions() {
+        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        pairs.insert(key, vec![0, 1, 5, 6]);
+
+        let regions = merge_consecutive_runs(&pairs, 5);
+        assert_eq!(regions.len(), 2);
+        // First run: starts [0, 1] → 6 lines
+        let r1 = regions.iter().find(|r| r.start_a == 0).unwrap();
+        assert_eq!(r1.line_count, 6);
+        // Second run: starts [5, 6] → 6 lines
+        let r2 = regions.iter().find(|r| r.start_a == 5).unwrap();
+        assert_eq!(r2.line_count, 6);
+    }
+
+    #[test]
+    fn test_merge_single_block() {
+        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 5 };
+        pairs.insert(key, vec![3]);
+
+        let regions = merge_consecutive_runs(&pairs, 5);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].line_count, 5); // min_match
+        assert_eq!(regions[0].start_a, 3);
+        assert_eq!(regions[0].start_b, 8);
+    }
+
+    #[test]
+    fn test_merge_duplicates_in_starts() {
+        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let key = MatchPairKey { file_a: 0, file_b: 1, offset: 0 };
+        // Duplicate start positions (can happen from multiple hash groups)
+        pairs.insert(key, vec![0, 0, 1, 1, 2]);
+
+        let regions = merge_consecutive_runs(&pairs, 5);
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].line_count, 7); // 5 + 3 - 1
     }
 
     #[test]
