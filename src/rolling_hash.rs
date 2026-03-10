@@ -106,6 +106,20 @@ pub fn compute_rolling_hashes(
     blocks
 }
 
+/// Groups block descriptors by hash, keeping only groups with 2+ entries.
+///
+/// Returns a map from block hash to the list of block descriptors sharing
+/// that hash. Single-entry groups (no duplicates) are filtered out.
+pub fn group_blocks(blocks: Vec<BlockDescriptor>) -> HashMap<u64, Vec<BlockDescriptor>> {
+    let mut groups: HashMap<u64, Vec<BlockDescriptor>> = HashMap::new();
+    for block in blocks {
+        groups.entry(block.hash).or_default().push(block);
+    }
+    // Keep only groups with 2+ entries (actual duplicates)
+    groups.retain(|_, v| v.len() >= 2);
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +215,80 @@ mod tests {
         let hashes: Vec<u64> = vec![];
         let blocks = compute_rolling_hashes(&hashes, 0, 5);
         assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn test_group_blocks_two_files_match() {
+        // Two files with identical 5-line content
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&shared, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 1, 5));
+
+        let groups = group_blocks(all_blocks);
+        assert_eq!(groups.len(), 1);
+        let group = groups.values().next().unwrap();
+        assert_eq!(group.len(), 2);
+        assert_eq!(group[0].file_num, 0);
+        assert_eq!(group[1].file_num, 1);
+    }
+
+    #[test]
+    fn test_group_blocks_no_match() {
+        let hashes_a: Vec<u64> = vec![1, 2, 3, 4, 5];
+        let hashes_b: Vec<u64> = vec![6, 7, 8, 9, 10];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&hashes_a, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&hashes_b, 1, 5));
+
+        let groups = group_blocks(all_blocks);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_group_blocks_three_files() {
+        let shared: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&shared, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 1, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared, 2, 5));
+
+        let groups = group_blocks(all_blocks);
+        assert_eq!(groups.len(), 1);
+        let group = groups.values().next().unwrap();
+        assert_eq!(group.len(), 3);
+    }
+
+    #[test]
+    fn test_group_blocks_multiple_groups() {
+        // Two distinct shared blocks
+        let shared_a: Vec<u64> = vec![10, 20, 30, 40, 50];
+        let shared_b: Vec<u64> = vec![60, 70, 80, 90, 100];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        // File 0 has block A, file 1 has block A, file 2 has block B, file 3 has block B
+        all_blocks.extend(compute_rolling_hashes(&shared_a, 0, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared_a, 1, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared_b, 2, 5));
+        all_blocks.extend(compute_rolling_hashes(&shared_b, 3, 5));
+
+        let groups = group_blocks(all_blocks);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn test_group_blocks_self_duplication() {
+        // Same block appears at two positions in the same file
+        // File content: [10, 20, 30, 40, 50, 99, 10, 20, 30, 40, 50]
+        let hashes: Vec<u64> = vec![10, 20, 30, 40, 50, 99, 10, 20, 30, 40, 50];
+        let mut all_blocks: Vec<BlockDescriptor> = Vec::new();
+        all_blocks.extend(compute_rolling_hashes(&hashes, 0, 5));
+
+        let groups = group_blocks(all_blocks);
+        // The block XOR(10,20,30,40,50) appears at positions 0 and 6
+        assert!(!groups.is_empty());
+        let matching_group = groups.values().find(|g| {
+            g.iter().any(|b| b.start == 0) && g.iter().any(|b| b.start == 6)
+        });
+        assert!(matching_group.is_some());
     }
 }
