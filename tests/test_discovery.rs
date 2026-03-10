@@ -1,44 +1,12 @@
 //! Tests for file discovery and filtering.
 
 use samesame::discovery::{
-    deduplicate_paths, discover_files, generate_pairs, is_hidden, is_symlink, scan_glob,
+    deduplicate_paths, discover_files, is_hidden, is_symlink, scan_glob,
 };
 use samesame::error::SameError;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
-
-#[test]
-fn test_generate_pairs() {
-    let pairs = generate_pairs(4);
-
-    assert_eq!(pairs.len(), 6); // 4 choose 2 = 6
-    assert!(pairs.contains(&(0, 1)));
-    assert!(pairs.contains(&(0, 2)));
-    assert!(pairs.contains(&(0, 3)));
-    assert!(pairs.contains(&(1, 2)));
-    assert!(pairs.contains(&(1, 3)));
-    assert!(pairs.contains(&(2, 3)));
-
-    // No self-comparisons
-    assert!(!pairs.iter().any(|(i, j)| i == j));
-
-    // No reverse pairs
-    assert!(!pairs.iter().any(|(i, j)| i > j));
-}
-
-#[test]
-fn test_generate_pairs_empty() {
-    assert!(generate_pairs(0).is_empty());
-    assert!(generate_pairs(1).is_empty());
-}
-
-#[test]
-fn test_generate_pairs_two() {
-    let pairs = generate_pairs(2);
-    assert_eq!(pairs.len(), 1);
-    assert_eq!(pairs[0], (0, 1));
-}
 
 #[test]
 fn test_is_hidden() {
