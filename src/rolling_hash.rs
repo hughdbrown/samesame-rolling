@@ -278,6 +278,113 @@ fn merge_consecutive_runs(
     regions
 }
 
+/// A location key: (file_num, start, end) identifying a specific code region.
+type LocationKey = (usize, usize, usize);
+
+/// Consolidates pairwise MergedRegions into multi-file DuplicateGroups.
+///
+/// Two MergedRegions are grouped together if they share a common
+/// (file, start, end) location. This handles cases where 3+ files
+/// share the same duplicate region.
+fn consolidate_regions(
+    regions: Vec<MergedRegion>,
+    registry: &FileRegistry,
+) -> Vec<DuplicateGroup> {
+    if regions.is_empty() {
+        return Vec::new();
+    }
+
+    // Build a map from each location to the set of regions it appears in
+    let mut location_to_regions: HashMap<LocationKey, Vec<usize>> = HashMap::new();
+    for (idx, region) in regions.iter().enumerate() {
+        let end_a: usize = region.start_a + region.line_count;
+        let end_b: usize = region.start_b + region.line_count;
+
+        let loc_a: LocationKey = (region.file_a, region.start_a, end_a);
+        let loc_b: LocationKey = (region.file_b, region.start_b, end_b);
+
+        location_to_regions.entry(loc_a).or_default().push(idx);
+        location_to_regions.entry(loc_b).or_default().push(idx);
+    }
+
+    // Group regions that share locations using a simple union-find approach
+    // (implemented inline since we're removing the union_find module)
+    let n: usize = regions.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+
+    // Find with path compression
+    fn find(parent: &mut [usize], x: usize) -> usize {
+        if parent[x] != x {
+            parent[x] = find(parent, parent[x]);
+        }
+        parent[x]
+    }
+
+    // Union regions that share a location
+    for region_indices in location_to_regions.values() {
+        if region_indices.len() > 1 {
+            let first: usize = region_indices[0];
+            for &other in &region_indices[1..] {
+                let ra: usize = find(&mut parent, first);
+                let rb: usize = find(&mut parent, other);
+                if ra != rb {
+                    parent[rb] = ra;
+                }
+            }
+        }
+    }
+
+    // Collect regions by their root
+    let mut groups_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..n {
+        let root: usize = find(&mut parent, i);
+        groups_map.entry(root).or_default().push(i);
+    }
+
+    // Build DuplicateGroups
+    let mut result: Vec<DuplicateGroup> = Vec::new();
+    for member_indices in groups_map.values() {
+        // Collect all unique locations from all regions in this group
+        let mut all_locations: Vec<LocationKey> = Vec::new();
+        let mut line_count: usize = 0;
+
+        for &idx in member_indices {
+            let region: &MergedRegion = &regions[idx];
+            let end_a: usize = region.start_a + region.line_count;
+            let end_b: usize = region.start_b + region.line_count;
+
+            all_locations.push((region.file_a, region.start_a, end_a));
+            all_locations.push((region.file_b, region.start_b, end_b));
+            line_count = line_count.max(region.line_count);
+        }
+
+        all_locations.sort();
+        all_locations.dedup();
+
+        let locations: Vec<(PathBuf, usize, usize)> = all_locations
+            .into_iter()
+            .map(|(file_num, start, end)| {
+                (registry.get_path(file_num).to_path_buf(), start, end)
+            })
+            .collect();
+
+        result.push(DuplicateGroup {
+            line_count,
+            locations,
+            content: None,
+        });
+    }
+
+    // Sort: largest line count first, then by first location
+    result.sort_by(|a, b| {
+        b.line_count
+            .cmp(&a.line_count)
+            .then_with(|| a.locations.cmp(&b.locations))
+    });
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,6 +591,71 @@ mod tests {
         let reg = FileRegistry::new();
         let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
         assert!(dup_groups.is_empty());
+    }
+
+    #[test]
+    fn test_consolidate_two_files() {
+        let mut reg = FileRegistry::new();
+        reg.register(PathBuf::from("a.rs"));
+        reg.register(PathBuf::from("b.rs"));
+
+        let regions = vec![MergedRegion {
+            file_a: 0, start_a: 0,
+            file_b: 1, start_b: 10,
+            line_count: 7,
+        }];
+
+        let groups = consolidate_regions(regions, &reg);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].line_count, 7);
+        assert_eq!(groups[0].locations.len(), 2);
+        assert_eq!(groups[0].locations[0].0, PathBuf::from("a.rs"));
+        assert_eq!(groups[0].locations[1].0, PathBuf::from("b.rs"));
+    }
+
+    #[test]
+    fn test_consolidate_three_files() {
+        let mut reg = FileRegistry::new();
+        reg.register(PathBuf::from("a.rs"));
+        reg.register(PathBuf::from("b.rs"));
+        reg.register(PathBuf::from("c.rs"));
+
+        // A:0-7 matches B:10-17, and A:0-7 matches C:20-27
+        let regions = vec![
+            MergedRegion { file_a: 0, start_a: 0, file_b: 1, start_b: 10, line_count: 7 },
+            MergedRegion { file_a: 0, start_a: 0, file_b: 2, start_b: 20, line_count: 7 },
+        ];
+
+        let groups = consolidate_regions(regions, &reg);
+        // Should merge into one group with 3 locations (they share A:0-7)
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].locations.len(), 3);
+        assert_eq!(groups[0].line_count, 7);
+    }
+
+    #[test]
+    fn test_consolidate_independent_groups() {
+        let mut reg = FileRegistry::new();
+        reg.register(PathBuf::from("a.rs"));
+        reg.register(PathBuf::from("b.rs"));
+        reg.register(PathBuf::from("c.rs"));
+        reg.register(PathBuf::from("d.rs"));
+
+        // A:0-5 matches B:0-5, C:10-15 matches D:10-15 (independent)
+        let regions = vec![
+            MergedRegion { file_a: 0, start_a: 0, file_b: 1, start_b: 0, line_count: 5 },
+            MergedRegion { file_a: 2, start_a: 10, file_b: 3, start_b: 10, line_count: 5 },
+        ];
+
+        let groups = consolidate_regions(regions, &reg);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn test_consolidate_empty() {
+        let reg = FileRegistry::new();
+        let groups = consolidate_regions(Vec::new(), &reg);
+        assert!(groups.is_empty());
     }
 
     #[test]
