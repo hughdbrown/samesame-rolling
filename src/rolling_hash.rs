@@ -7,8 +7,9 @@
 //! XOR, making it order-sensitive: permuted lines produce different hashes.
 //! This eliminates the false positives that plain XOR produces for reordered code.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+use rustc_hash::FxHashMap;
 
 use crate::types::FileDescription;
 
@@ -17,7 +18,7 @@ use crate::types::FileDescription;
 /// File numbers are 0-based and assigned in registration order.
 #[derive(Debug)]
 pub struct FileRegistry {
-    name_to_num: HashMap<PathBuf, usize>,
+    name_to_num: FxHashMap<PathBuf, usize>,
     num_to_name: Vec<PathBuf>,
 }
 
@@ -31,7 +32,7 @@ impl FileRegistry {
     /// Creates an empty file registry.
     pub fn new() -> Self {
         Self {
-            name_to_num: HashMap::new(),
+            name_to_num: FxHashMap::default(),
             num_to_name: Vec::new(),
         }
     }
@@ -154,8 +155,8 @@ pub(crate) struct BlockGroupKey {
 /// that key. Single-entry groups (no duplicates) are filtered out.
 pub(crate) fn group_blocks(
     blocks: Vec<BlockDescriptor>,
-) -> HashMap<BlockGroupKey, Vec<BlockDescriptor>> {
-    let mut groups: HashMap<BlockGroupKey, Vec<BlockDescriptor>> = HashMap::new();
+) -> FxHashMap<BlockGroupKey, Vec<BlockDescriptor>> {
+    let mut groups: FxHashMap<BlockGroupKey, Vec<BlockDescriptor>> = FxHashMap::default();
     for block in blocks {
         let key = BlockGroupKey { hash: block.hash };
         groups.entry(key).or_default().push(block);
@@ -172,7 +173,7 @@ pub(crate) fn group_blocks(
 /// by first location for deterministic output.
 #[cfg(test)]
 pub(crate) fn blocks_to_duplicate_groups(
-    groups: &HashMap<BlockGroupKey, Vec<BlockDescriptor>>,
+    groups: &FxHashMap<BlockGroupKey, Vec<BlockDescriptor>>,
     registry: &FileRegistry,
     min_match: usize,
 ) -> Vec<DuplicateGroup> {
@@ -217,9 +218,9 @@ struct MatchPairKey {
 /// locations. Each pair is keyed by the two file numbers and their relative
 /// offset (start_b - start_a). The value is a list of start positions in file_a.
 fn extract_match_pairs(
-    groups: &HashMap<BlockGroupKey, Vec<BlockDescriptor>>,
-) -> HashMap<MatchPairKey, Vec<usize>> {
-    let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+    groups: &FxHashMap<BlockGroupKey, Vec<BlockDescriptor>>,
+) -> FxHashMap<MatchPairKey, Vec<usize>> {
+    let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
 
     for blocks in groups.values() {
         for i in 0..blocks.len() {
@@ -260,7 +261,7 @@ struct MergedRegion {
 /// deduplicates them, and finds maximal runs of consecutive integers.
 /// Each run of length L represents a duplicate of `min_match + L - 1` lines.
 fn merge_consecutive_runs(
-    pairs: &HashMap<MatchPairKey, Vec<usize>>,
+    pairs: &FxHashMap<MatchPairKey, Vec<usize>>,
     min_match: usize,
 ) -> Vec<MergedRegion> {
     let mut regions: Vec<MergedRegion> = Vec::new();
@@ -385,7 +386,7 @@ fn consolidate_regions(regions: Vec<MergedRegion>, registry: &FileRegistry) -> V
     }
 
     // Build a map from each location to the set of regions it appears in
-    let mut location_to_regions: HashMap<LocationKey, Vec<usize>> = HashMap::new();
+    let mut location_to_regions: FxHashMap<LocationKey, Vec<usize>> = FxHashMap::default();
     for (idx, region) in regions.iter().enumerate() {
         let end_a: usize = region.start_a + region.line_count;
         let end_b: usize = region.start_b + region.line_count;
@@ -426,7 +427,7 @@ fn consolidate_regions(regions: Vec<MergedRegion>, registry: &FileRegistry) -> V
     }
 
     // Collect regions by their root
-    let mut groups_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut groups_map: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
     for i in 0..n {
         let root: usize = find(&mut parent, i);
         groups_map.entry(root).or_default().push(i);
@@ -693,7 +694,7 @@ mod tests {
 
     #[test]
     fn test_basic_duplicate_groups_empty() {
-        let groups: HashMap<BlockGroupKey, Vec<BlockDescriptor>> = HashMap::new();
+        let groups: FxHashMap<BlockGroupKey, Vec<BlockDescriptor>> = FxHashMap::default();
         let reg = FileRegistry::new();
         let dup_groups = blocks_to_duplicate_groups(&groups, &reg, 5);
         assert!(dup_groups.is_empty());
@@ -891,7 +892,7 @@ mod tests {
 
     #[test]
     fn test_merge_consecutive_two_blocks() {
-        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
         let key = MatchPairKey {
             file_a: 0,
             file_b: 1,
@@ -908,7 +909,7 @@ mod tests {
 
     #[test]
     fn test_merge_consecutive_long_run() {
-        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
         let key = MatchPairKey {
             file_a: 0,
             file_b: 1,
@@ -923,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_merge_gap_produces_two_regions() {
-        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
         let key = MatchPairKey {
             file_a: 0,
             file_b: 1,
@@ -943,7 +944,7 @@ mod tests {
 
     #[test]
     fn test_merge_single_block() {
-        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
         let key = MatchPairKey {
             file_a: 0,
             file_b: 1,
@@ -960,7 +961,7 @@ mod tests {
 
     #[test]
     fn test_merge_duplicates_in_starts() {
-        let mut pairs: HashMap<MatchPairKey, Vec<usize>> = HashMap::new();
+        let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
         let key = MatchPairKey {
             file_a: 0,
             file_b: 1,

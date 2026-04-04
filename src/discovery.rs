@@ -89,7 +89,7 @@ pub fn is_hidden(path: &Path) -> bool {
 
 /// Remove duplicate paths, keeping first occurrence.
 pub fn deduplicate_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = rustc_hash::FxHashSet::default();
     let mut result = Vec::with_capacity(paths.len());
 
     for path in paths {
