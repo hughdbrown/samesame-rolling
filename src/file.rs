@@ -29,14 +29,10 @@ pub fn is_binary_file(path: &Path) -> Result<bool> {
     Ok(buffer[..bytes_read].contains(&0))
 }
 
-/// Hash a normalized line using BLAKE3.
-/// Returns the first 8 bytes of the hash as a u64.
+/// Hash a normalized line using xxh3 (non-cryptographic, very fast).
+/// Returns a 64-bit hash.
 pub fn hash_line(line: &str) -> u64 {
-    let hash = blake3::hash(line.as_bytes());
-    let bytes = hash.as_bytes();
-    u64::from_le_bytes([
-        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-    ])
+    xxhash_rust::xxh3::xxh3_64(line.as_bytes())
 }
 
 /// Read a file and create a FileDescription.
