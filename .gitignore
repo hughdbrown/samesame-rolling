@@ -1,2 +1,4 @@
 target/
 .env
+.gemini/settings.json
+.kata.toml
