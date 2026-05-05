@@ -8,6 +8,14 @@ repository = "https://github.com/hughdbrown/samesame"
 keywords = ["duplicate", "code", "hash", "analysis"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
+include = [
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
