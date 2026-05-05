@@ -1,0 +1,186 @@
+
+ ▐▛███▜▌   Claude Code v2.1.63
+▝▜█████▛▘  Opus 4.6 · Claude Max
+  ▘▘ ▝▝    ~/workspace/hughdbrown/rust/samesame
+
+❯ When I run the rolling hash version of the samesame code, I get results I 
+   don't understand.                                                        
+                                                                            
+  time samesame-rolling --match=15 -v                                       
+  ~/workspace/hughdbrown/roborev/internal/storage/jobs.go                   
+  ```                                                                       
+  15 lines duplicated across 2 files:                                       
+    /Users/hughbrown/workspace/hughdbrown/roborev/internal/storage/jobs.go  
+   lines 1135-1149                                                          
+    /Users/hughbrown/workspace/hughdbrown/roborev/internal/storage/jobs.go  
+   lines 1282-1296                                                          
+                                                                            
+    1135 |         }                                                        
+    1136 |         if model.Valid {                                         
+    1137 |             j.Model = model.String                               
+    1138 |         }                                                        
+    1139 |         if sessionID.Valid {                                     
+    1140 |             j.SessionID = sessionID.String                       
+    1141 |         }                                                        
+    1142 |         if provider.Valid {                                      
+    1143 |             j.Provider = provider.String                         
+    1144 |         }                                                        
+    1145 |         if jobTypeStr.Valid {                                    
+    1146 |             j.JobType = jobTypeStr.String                        
+    1147 |         }                                                        
+    1148 |         if reviewTypeStr.Valid {                                 
+    1149 |             j.ReviewType = reviewTypeStr.String                  
+                                                                            
+  ---                                                                       
+                                                                            
+  Summary: 1 files analyzed, 4 duplicate groups (71 lines)                  
+  ```                                                                       
+  Running the matching on a single file, minimum match is 15 lines, I get a 
+   match that covers lines 1135-1149 and 1282-1296.                         
+                                                                            
+  If I run the same code on the same source file but ask for 20 line        
+  minimum matches, I get this:                                              
+  ```                                                                       
+  20 lines duplicated across 2 files:                                       
+    /Users/hughbrown/workspace/hughdbrown/roborev/internal/storage/jobs.go  
+   lines 1135-1154                                                          
+    /Users/hughbrown/workspace/hughdbrown/roborev/internal/storage/jobs.go  
+   lines 1282-1301                                                          
+                                                                            
+    1135 |         }                                                        
+    1136 |         if model.Valid {                                         
+    1137 |             j.Model = model.String                               
+    1138 |         }                                                        
+    1139 |         if sessionID.Valid {                                     
+    1140 |             j.SessionID = sessionID.String                       
+    1141 |         }                                                        
+    1142 |         if provider.Valid {                                      
+    1143 |             j.Provider = provider.String                         
+    1144 |         }                                                        
+    1145 |         if jobTypeStr.Valid {                                    
+    1146 |             j.JobType = jobTypeStr.String                        
+    1147 |         }                                                        
+    1148 |         if reviewTypeStr.Valid {                                 
+    1149 |             j.ReviewType = reviewTypeStr.String                  
+    1150 |         }                                                        
+    1151 |         if patchIDStr.Valid {                                    
+    1152 |             j.PatchID = patchIDStr.String                        
+    1153 |         }                                                        
+    1154 |         if branch.Valid {                                        
+  ```                                                                       
+  This codes line 1135-1154 and 1282-1301.                                  
+                                                                            
+  So the request for a 15 line match could have reported this as a 20-line  
+  match starting at the two start lines but instead reported them as        
+  15-line matches. Why?                                                     
+                                                                            
+  In fact, these are 22-line matches:                                       
+  ```                                                                       
+  22 lines duplicated across 2 files:                                       
+    /Users/hughbrown/workspace/hughdbrown/roborev/internal/storage/jobs.go  
+   lines 1135-1156                                                          
+    /Users/hughbrown/workspace/hughdbrown/roborev/internal/storage/jobs.go  
+   lines 1282-1303                                                          
+                                                                            
+    1135 |         }                                                        
+    1136 |         if model.Valid {                                         
+    1137 |             j.Model = model.String                               
+    1138 |         }                                                        
+    1139 |         if sessionID.Valid {                                     
+    1140 |             j.SessionID = sessionID.String                       
+    1141 |         }                                                        
+    1142 |         if provider.Valid {                                      
+    1143 |             j.Provider = provider.String                         
+    1144 |         }                                                        
+    1145 |         if jobTypeStr.Valid {                                    
+    1146 |             j.JobType = jobTypeStr.String                        
+    1147 |         }                                                        
+    1148 |         if reviewTypeStr.Valid {                                 
+    1149 |             j.ReviewType = reviewTypeStr.String                  
+    1150 |         }                                                        
+    1151 |         if patchIDStr.Valid {                                    
+    1152 |             j.PatchID = patchIDStr.String                        
+    1153 |         }                                                        
+    1154 |         if branch.Valid {                                        
+    1155 |             j.Branch = branch.String                             
+    1156 |         }                                                        
+  ```                                                                       
+  Why are these not reported as 22-line matches in the 15 line and 20 line  
+  requests?                                                                 
+
+⏺ Let me look at the rolling hash merging logic to understand the bug.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Let me look at the actual Go file to understand the pattern, and examine the
+  rolling hash merging logic more closely.
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ Now I can see the problem. Let me look at the exact lines in both regions
+  side-by-side:
+
+⏺ Read 1 file (ctrl+o to expand)
+
+⏺ This is the XOR order-independence false positive described in the CLAUDE.md
+  docs. These two regions are not actually identical - the model and sessionID
+  blocks are swapped:
+
+  Region 1 (lines 1135-1156):
+  }
+  if model.Valid {           ← model FIRST
+      j.Model = model.String
+  }
+  if sessionID.Valid {       ← sessionID SECOND
+      j.SessionID = sessionID.String
+  }
+  if provider.Valid {        ← identical from here on
+      ...
+
+  Region 2 (lines 1282-1303):
+  }
+  if sessionID.Valid {       ← sessionID FIRST
+      j.SessionID = sessionID.String
+  }
+  if model.Valid {           ← model SECOND
+      j.Model = model.String
+  }
+  if provider.Valid {        ← identical from here on
+      ...
+
+  Why the merging doesn't extend
+
+  The rolling hash extension works by sliding the window one line at a time and
+  checking if consecutive windows also match. For the window at position 1134
+  (0-indexed, line 1135), a 15-line window captures both the model and sessionID
+   blocks. Since XOR is order-independent, the hash matches despite the swap.
+
+  But when the window slides to position 1135 (line 1136):
+  - Region 1 starts with if model.Valid {
+  - Region 2 starts with if sessionID.Valid {
+
+  The composite BlockGroupKey includes first_hash, so these windows have
+  different keys and don't match. The same happens at positions 1136-1139 — the
+  swap means corresponding lines differ.
+
+  At position 1140 (line 1141, if provider.Valid {), the content IS genuinely
+  identical from there on. Those windows match and form a separate run. With
+  --match=15, this produces a second group of 16 lines (15 + 2 - 1, from windows
+   at positions 1140-1141).
+
+  So the result is two separate runs that can't be merged because positions
+  1135-1139 have a gap:
+  1. Position 1134 alone → 15-line group (false positive from XOR permutation)
+  2. Positions 1140-1141 → 16-line group (genuine duplicate from provider
+  onward)
+
+  With --match=22, there's only one window position (1134), the XOR of all 22
+  lines matches (same multiset), and first/last hashes match (both }), so it
+  reports 22 lines.
+
+  In summary: The tool is actually working correctly here. The "22-line match"
+  is a false positive — the code isn't actually identical, just permuted. The
+  15-line and 16-line groups more accurately reflect what's happening (one false
+   positive from XOR, one genuine duplicate of the tail).
+
+✻ Sautéed for 6m 0s
