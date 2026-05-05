@@ -1,6 +1,6 @@
 [package]
 name = "samesame-rolling"
-version = "1.2.1"
+version = "1.3.0"
 edition = "2024"
 description = "A tool to identify repeated fragments of code across multiple files"
 license = "MIT"
@@ -38,6 +38,10 @@ panic = "abort"
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3.24.0"
+
+[lib]
+name = "samesame"
+path = "src/lib.rs"
 
 [[bin]]
 name = "samesame"         # the installed executable
