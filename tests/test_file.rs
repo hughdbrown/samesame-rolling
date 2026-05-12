@@ -1,7 +1,7 @@
 //! Tests for file reading, normalization, and hashing.
 
 use samesame::error::{Result, SameError};
-use samesame::file::{hash_line, is_binary_file, read_file, read_file_if_text};
+use samesame::file::{hash_line, is_binary_file, read_file, read_file_if_text, read_lines};
 use std::io::Write;
 use std::path::Path;
 use tempfile::NamedTempFile;
@@ -48,16 +48,15 @@ fn test_read_file() -> Result<()> {
 
     let desc = read_file(temp.path())?;
 
-    assert_eq!(desc.lines.len(), 3);
-    // Lines preserve original indentation
-    assert_eq!(desc.lines[0], "  line one  ");
-    assert_eq!(desc.lines[1], "line two");
-    assert_eq!(desc.lines[2], "   line three   ");
     assert_eq!(desc.hashes.len(), 3);
 
-    // But hashes are computed from trimmed lines, so these should be equal
+    // Hashes are computed from trimmed lines.
     let hash_trimmed = hash_line("line one");
     assert_eq!(desc.hashes[0], hash_trimmed);
+
+    // Original line content is recoverable via read_lines (preserves indentation).
+    let lines = read_lines(temp.path())?;
+    assert_eq!(lines, vec!["  line one  ", "line two", "   line three   "]);
 
     Ok(())
 }
@@ -68,7 +67,6 @@ fn test_read_file_empty() -> Result<()> {
     // Don't write anything
 
     let desc = read_file(temp.path())?;
-    assert!(desc.lines.is_empty());
     assert!(desc.hashes.is_empty());
 
     Ok(())
@@ -80,8 +78,8 @@ fn test_read_file_single_line() -> Result<()> {
     write!(temp, "single line no newline").unwrap();
 
     let desc = read_file(temp.path())?;
-    assert_eq!(desc.lines.len(), 1);
-    assert_eq!(desc.lines[0], "single line no newline");
+    assert_eq!(desc.hashes.len(), 1);
+    assert_eq!(read_lines(temp.path())?, vec!["single line no newline"]);
 
     Ok(())
 }
@@ -170,7 +168,7 @@ fn test_read_file_if_text_normal() -> Result<()> {
     assert!(result.is_some());
 
     let desc = result.unwrap();
-    assert_eq!(desc.lines.len(), 1);
+    assert_eq!(desc.hashes.len(), 1);
 
     Ok(())
 }
@@ -209,11 +207,11 @@ fn test_read_file_with_tabs() -> Result<()> {
     writeln!(temp, "\t\tindented with tabs\t\t").unwrap();
 
     let desc = read_file(temp.path())?;
-    // Original line preserves tabs
-    assert_eq!(desc.lines[0], "\t\tindented with tabs\t\t");
-    // But hash is computed from trimmed version
+    // Hash is computed from the trimmed line.
     let expected_hash = hash_line("indented with tabs");
     assert_eq!(desc.hashes[0], expected_hash);
+    // Lines fetched via read_lines preserve original tabs.
+    assert_eq!(read_lines(temp.path())?[0], "\t\tindented with tabs\t\t");
 
     Ok(())
 }
@@ -226,10 +224,8 @@ fn test_read_file_blank_lines() -> Result<()> {
     writeln!(temp, "line 3").unwrap();
 
     let desc = read_file(temp.path())?;
-    assert_eq!(desc.lines.len(), 3);
-    assert_eq!(desc.lines[0], "line 1");
-    assert_eq!(desc.lines[1], "");
-    assert_eq!(desc.lines[2], "line 3");
+    assert_eq!(desc.hashes.len(), 3);
+    assert_eq!(read_lines(temp.path())?, vec!["line 1", "", "line 3"]);
 
     Ok(())
 }
@@ -240,7 +236,8 @@ fn test_read_file_unicode() -> Result<()> {
     writeln!(temp, "Hello 世界 🌍").unwrap();
 
     let desc = read_file(temp.path())?;
-    assert_eq!(desc.lines[0], "Hello 世界 🌍");
+    assert_eq!(desc.hashes.len(), 1);
+    assert_eq!(read_lines(temp.path())?[0], "Hello 世界 🌍");
 
     Ok(())
 }

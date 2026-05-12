@@ -715,11 +715,9 @@ mod tests {
     }
 
     fn make_file_desc(name: &str, hashes: Vec<u64>) -> FileDescription {
-        let lines: Vec<String> = hashes.iter().map(|h| format!("line_{h}")).collect();
         FileDescription {
             filename: PathBuf::from(name),
             hashes,
-            lines,
         }
     }
 

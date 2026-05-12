@@ -3,14 +3,15 @@
 use std::path::PathBuf;
 
 /// Represents a file's content as a sequence of line hashes.
+///
+/// Lines themselves are not stored — only their hashes. Original line
+/// content is re-read lazily at output time for `--verbose` / `--regex`.
 #[derive(Debug)]
 pub struct FileDescription {
     /// Path to the source file.
     pub filename: PathBuf,
     /// Hash of each line (after normalization).
     pub hashes: Vec<u64>,
-    /// Original line content (for output display).
-    pub lines: Vec<String>,
 }
 
 impl FileDescription {
