@@ -71,11 +71,11 @@ pub(crate) struct BlockDescriptor {
     /// Buzhash of per-line hashes for this window (order-dependent).
     pub(crate) hash: u64,
     /// File number from the FileRegistry.
-    pub(crate) file_num: usize,
+    pub(crate) file_num: u32,
     /// Starting line index (0-based, inclusive).
-    pub(crate) start: usize,
+    pub(crate) start: u32,
     /// Ending line index (0-based, exclusive).
-    pub(crate) end: usize,
+    pub(crate) end: u32,
 }
 
 /// Computes Buzhash rolling hash blocks over a sliding window of `min_match` lines.
@@ -104,11 +104,14 @@ pub(crate) fn compute_rolling_hashes(
         current_hash ^= hash.rotate_left((min_match - 1 - i) as u32);
     }
 
+    let file_num_u32: u32 = file_num as u32;
+    let min_match_u32: u32 = min_match as u32;
+
     blocks.push(BlockDescriptor {
         hash: current_hash,
-        file_num,
+        file_num: file_num_u32,
         start: 0,
-        end: min_match,
+        end: min_match_u32,
     });
 
     // Slide the window using Buzhash update:
@@ -117,11 +120,12 @@ pub(crate) fn compute_rolling_hashes(
         current_hash = current_hash.rotate_left(1)
             ^ hashes[i - 1].rotate_left(min_match as u32)
             ^ hashes[i + min_match - 1];
+        let i_u32: u32 = i as u32;
         blocks.push(BlockDescriptor {
             hash: current_hash,
-            file_num,
-            start: i,
-            end: i + min_match,
+            file_num: file_num_u32,
+            start: i_u32,
+            end: i_u32 + min_match_u32,
         });
     }
 
@@ -183,7 +187,13 @@ pub(crate) fn blocks_to_duplicate_groups(
         .map(|blocks| {
             let mut locations: Vec<(PathBuf, usize, usize)> = blocks
                 .iter()
-                .map(|b| (registry.get_path(b.file_num).to_path_buf(), b.start, b.end))
+                .map(|b| {
+                    (
+                        registry.get_path(b.file_num as usize).to_path_buf(),
+                        b.start as usize,
+                        b.end as usize,
+                    )
+                })
                 .collect();
             locations.sort();
 
@@ -234,12 +244,12 @@ fn extract_match_pairs(
                 };
 
                 let key = MatchPairKey {
-                    file_a: a.file_num,
-                    file_b: b.file_num,
+                    file_a: a.file_num as usize,
+                    file_b: b.file_num as usize,
                     offset: b.start as isize - a.start as isize,
                 };
 
-                pairs.entry(key).or_default().push(a.start);
+                pairs.entry(key).or_default().push(a.start as usize);
             }
         }
     }
@@ -577,7 +587,7 @@ mod tests {
 
         // Verify each block's hash equals manual Buzhash of the window
         for block in &blocks {
-            let expected: u64 = expected_buzhash(&hashes[block.start..block.end]);
+            let expected: u64 = expected_buzhash(&hashes[block.start as usize..block.end as usize]);
             assert_eq!(
                 block.hash, expected,
                 "Block at start={} has wrong hash",
