@@ -156,7 +156,8 @@ pub(crate) struct BlockGroupKey {
 pub(crate) fn group_blocks(
     blocks: Vec<BlockDescriptor>,
 ) -> FxHashMap<BlockGroupKey, Vec<BlockDescriptor>> {
-    let mut groups: FxHashMap<BlockGroupKey, Vec<BlockDescriptor>> = FxHashMap::default();
+    let mut groups: FxHashMap<BlockGroupKey, Vec<BlockDescriptor>> =
+        FxHashMap::with_capacity_and_hasher(blocks.len(), Default::default());
     for block in blocks {
         let key = BlockGroupKey { hash: block.hash };
         groups.entry(key).or_default().push(block);
@@ -220,7 +221,8 @@ struct MatchPairKey {
 fn extract_match_pairs(
     groups: &FxHashMap<BlockGroupKey, Vec<BlockDescriptor>>,
 ) -> FxHashMap<MatchPairKey, Vec<usize>> {
-    let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> = FxHashMap::default();
+    let mut pairs: FxHashMap<MatchPairKey, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(groups.len(), Default::default());
 
     for blocks in groups.values() {
         for i in 0..blocks.len() {
@@ -386,7 +388,8 @@ fn consolidate_regions(regions: Vec<MergedRegion>, registry: &FileRegistry) -> V
     }
 
     // Build a map from each location to the set of regions it appears in
-    let mut location_to_regions: FxHashMap<LocationKey, Vec<usize>> = FxHashMap::default();
+    let mut location_to_regions: FxHashMap<LocationKey, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(regions.len() * 2, Default::default());
     for (idx, region) in regions.iter().enumerate() {
         let end_a: usize = region.start_a + region.line_count;
         let end_b: usize = region.start_b + region.line_count;
@@ -427,7 +430,8 @@ fn consolidate_regions(regions: Vec<MergedRegion>, registry: &FileRegistry) -> V
     }
 
     // Collect regions by their root
-    let mut groups_map: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    let mut groups_map: FxHashMap<usize, Vec<usize>> =
+        FxHashMap::with_capacity_and_hasher(regions.len(), Default::default());
     for i in 0..n {
         let root: usize = find(&mut parent, i);
         groups_map.entry(root).or_default().push(i);
